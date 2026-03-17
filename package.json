@@ -1,0 +1,30 @@
+{
+  "name": "mimi-ocr",
+  "version": "1.0.0",
+  "description": "日本語文書 OCR ツール（Gemini / Claude / OpenAI 対応）",
+  "main": "dist/src/gui/main.js",
+  "scripts": {
+    "build": "tsc -p . && copyfiles -u 1 \"src/**/*.html\" dist/src && copyfiles -u 1 \"src/templates/*.md\" dist/src",
+    "gui": "npm run build && electron dist/src/gui/main.js",
+    "ocr": "npm run build && node dist/src/ocr.js",
+    "merge": "npm run build && node dist/src/merge_pages.js",
+    "split": "npm run build && node dist/src/split_pages.js",
+    "deblank": "npm run build && node dist/src/remove_blank_pages.js",
+    "build:launcher": "dotnet publish src/launcher/Launcher.csproj -c Release -o bin"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.67.0",
+    "@google/genai": "^1.34.0",
+    "adm-zip": "^0.5.16",
+    "canvas": "^2.11.2",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^3.11.174",
+    "word-extractor": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "copyfiles": "^2.4.1",
+    "electron": "^40.0.0",
+    "typescript": "^5.8.2"
+  }
+}

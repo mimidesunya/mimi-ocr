@@ -1,0 +1,28 @@
+# Node.js
+node_modules/
+dist/
+package-lock.json
+
+# アプリ設定（テンプレートのみ管理）
+config.json
+
+# OCR中間ファイル
+*.batch_state.txt
+
+# .NET ランチャービルド
+src/launcher/bin/
+src/launcher/obj/
+bin/
+
+# .NET SDK
+.dotnet/
+
+# OS / エディタ
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+*.swo
+.vs/
+*.user
+*.suo

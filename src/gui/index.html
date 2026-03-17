@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mimi-ocr</title>
+    <style>
+        :root {
+            --bg-color: rgba(20, 25, 30, 0.88);
+            --card-color: rgba(40, 45, 55, 0.6);
+            --accent-color: #64b5f6;
+            --text-color: #e0e0e0;
+            --secondary-text-color: #a0a0a0;
+            --success-color: #81c784;
+            --error-color: #e57373;
+            --input-bg: rgba(0, 0, 0, 0.35);
+            --input-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: transparent;
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .app-container {
+            flex: 1;
+            background: var(--bg-color);
+            backdrop-filter: blur(12px);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            margin: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        /* ヘッダー（ドラッグ領域） */
+        .header {
+            padding: 10px 20px 4px;
+            -webkit-app-region: drag;
+            text-align: center;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: 300;
+            color: var(--accent-color);
+            letter-spacing: 3px;
+        }
+
+        /* ツール選択グリッド */
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            padding: 8px 20px;
+        }
+
+        .tool-card {
+            background: var(--card-color);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 10px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            height: 44px;
+        }
+
+        .tool-card:hover {
+            background: rgba(100, 181, 246, 0.1);
+            border-color: var(--accent-color);
+            transform: translateY(-1px);
+        }
+
+        .tool-card.active {
+            background: rgba(100, 181, 246, 0.2);
+            border-color: var(--accent-color);
+            box-shadow: 0 0 12px rgba(100, 181, 246, 0.2);
+        }
+
+        .tool-icon { font-size: 1.1rem; color: var(--accent-color); }
+        .tool-name  { font-size: 0.8rem; font-weight: 500; }
+
+        /* オプションセクション */
+        .options-section {
+            display: flex;
+            flex-direction: column;
+            padding: 0 20px;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+
+        .selector-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .selector-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .option-label {
+            font-size: 0.72rem;
+            color: var(--secondary-text-color);
+            white-space: nowrap;
+        }
+
+        .option-label.disabled { opacity: 0.35; }
+
+        /* トグルグループ */
+        .toggle-group {
+            display: flex;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            padding: 2px;
+            gap: 2px;
+        }
+
+        .toggle-group.disabled { opacity: 0.4; }
+
+        .toggle-btn {
+            padding: 4px 10px;
+            font-size: 0.72rem;
+            cursor: pointer;
+            color: rgba(255, 255, 255, 0.35);
+            transition: all 0.2s ease;
+            border: none;
+            background: transparent;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+
+        .toggle-btn:hover { color: rgba(255, 255, 255, 0.6); background: rgba(255, 255, 255, 0.05); }
+
+        .toggle-btn.active {
+            color: #fff;
+            background: var(--accent-color);
+            font-weight: 600;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .toggle-btn.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* バッチサイズ入力 */
+        .batch-size-input {
+            width: 48px;
+            padding: 3px 6px;
+            font-size: 0.72rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            color: var(--text-color);
+            text-align: center;
+            outline: none;
+            font-family: inherit;
+        }
+
+        .batch-size-input:focus { border-color: var(--accent-color); }
+        .batch-size-input:disabled { opacity: 0.35; cursor: not-allowed; }
+
+        /* コンテキストファイル行 */
+        .context-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 0 20px;
+            margin-bottom: 6px;
+            transition: opacity 0.2s;
+        }
+
+        .context-row.hidden { opacity: 0; pointer-events: none; }
+
+        .context-label { font-size: 0.72rem; color: var(--secondary-text-color); white-space: nowrap; }
+
+        .context-input {
+            flex: 1;
+            padding: 4px 8px;
+            font-size: 0.72rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            color: var(--text-color);
+            outline: none;
+            font-family: inherit;
+            min-width: 0;
+        }
+
+        .context-input:focus { border-color: var(--accent-color); }
+
+        .context-browse-btn {
+            padding: 4px 10px;
+            font-size: 0.72rem;
+            background: rgba(100, 181, 246, 0.15);
+            border: 1px solid var(--accent-color);
+            border-radius: 4px;
+            color: var(--accent-color);
+            cursor: pointer;
+            font-family: inherit;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }
+
+        .context-browse-btn:hover { background: rgba(100, 181, 246, 0.25); }
+
+        /* 分割JSON入力行 */
+        .split-json-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 0 20px;
+            margin-bottom: 6px;
+            transition: opacity 0.2s;
+        }
+
+        .split-json-row.hidden { display: none; }
+
+        .split-json-textarea {
+            width: 100%;
+            min-height: 90px;
+            max-height: 160px;
+            padding: 6px 8px;
+            font-size: 0.72rem;
+            font-family: 'Consolas', monospace;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            color: var(--text-color);
+            outline: none;
+            resize: vertical;
+        }
+
+        .split-json-textarea:focus { border-color: var(--accent-color); }
+        .split-json-textarea::placeholder { color: rgba(255, 255, 255, 0.25); }
+
+        /* ドロップゾーン */
+        .drop-zone {
+            margin: 0 20px 10px;
+            border: 2px dashed rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 80px;
+            position: relative;
+            transition: all 0.3s ease;
+            background: rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+        }
+
+        .drop-zone.drag-over {
+            border-color: var(--accent-color);
+            background: rgba(100, 181, 246, 0.05);
+            transform: scale(0.99);
+        }
+
+        .drop-message { text-align: center; pointer-events: none; }
+        .drop-icon    { font-size: 1.8rem; color: var(--secondary-text-color); margin-bottom: 4px; }
+        .drop-text    { color: var(--secondary-text-color); font-size: 0.95rem; }
+        .drop-subtext { color: rgba(255, 255, 255, 0.3); font-size: 0.75rem; margin-top: 4px; }
+
+        /* コンソール出力 */
+        .console-container {
+            flex: 1;
+            min-height: 80px;
+            max-height: 180px;
+            background: #111;
+            margin: 0 20px 10px;
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.82rem;
+            overflow-y: auto;
+            overflow-x: hidden;
+            color: #ccc;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .log-line { margin: 2px 0; padding-bottom: 1px; border-bottom: 1px solid rgba(255,255,255,0.03); }
+        .log-error   { color: var(--error-color); }
+        .log-success { color: var(--success-color); }
+
+        /* スクロールバー */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+
+        /* ステータスバー */
+        .status-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--accent-color);
+            width: 0%;
+            transition: width 0.3s ease;
+            box-shadow: 0 0 10px var(--accent-color);
+        }
+
+        .separator {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.06);
+            margin: 2px 20px 6px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- ヘッダー -->
+        <div class="header">
+            <h1>mimi-ocr</h1>
+        </div>
+
+        <!-- ツール選択 -->
+        <div class="tools-grid">
+            <div class="tool-card active" data-script="ocr_general">
+                <div class="tool-icon">🔍</div>
+                <div class="tool-name">OCR（一般）</div>
+            </div>
+            <div class="tool-card" data-script="ocr_houhi">
+                <div class="tool-icon">⚖️</div>
+                <div class="tool-name">OCR（法匹）</div>
+            </div>
+            <div class="tool-card" data-script="merge">
+                <div class="tool-icon">📑</div>
+                <div class="tool-name">ページ結合</div>
+            </div>
+            <div class="tool-card" data-script="split">
+                <div class="tool-icon">✂️</div>
+                <div class="tool-name">文書分割</div>
+            </div>
+            <div class="tool-card" data-script="deblank">
+                <div class="tool-icon">🧹</div>
+                <div class="tool-name">白紙除去</div>
+            </div>
+        </div>
+
+        <div class="separator"></div>
+
+        <!-- OCRオプション -->
+        <div class="options-section">
+            <!-- OCRエンジン -->
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label" id="labelOcr">OCR:</span>
+                    <div class="toggle-group" id="toggleOcr">
+                        <button class="toggle-btn active" data-ocr-mode="ai">AIのみ</button>
+                        <button class="toggle-btn" data-ocr-mode="ndlocr_ai">ndlocr+AI</button>
+                        <button class="toggle-btn" data-ocr-mode="ndlocr_only">ndlocr-only</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI プロバイダー / 処理モード -->
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label" id="labelAi">AI:</span>
+                    <div class="toggle-group" id="toggleAi">
+                        <button class="toggle-btn active" data-ai="gemini">Gemini</button>
+                        <button class="toggle-btn" data-ai="claude">Claude</button>
+                        <button class="toggle-btn" data-ai="openai">OpenAI</button>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="option-label" id="labelMode">Mode:</span>
+                    <div class="toggle-group" id="toggleMode">
+                        <button class="toggle-btn" data-mode="batch">バッチ</button>
+                        <button class="toggle-btn active" data-mode="sync">同期</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PDFテキスト優先 / バッチサイズ -->
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label" id="labelPdfText">PDFテキスト:</span>
+                    <div class="toggle-group" id="togglePdfText">
+                        <button class="toggle-btn active" data-pdftext="false">Off</button>
+                        <button class="toggle-btn" data-pdftext="true">優先</button>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="option-label" id="labelBatch">バッチサイズ:</span>
+                    <input type="number" id="batchSizeInput" class="batch-size-input" value="4" min="1" max="20">
+                </div>
+            </div>
+
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label" id="labelAutoRename">自動改名:</span>
+                    <div class="toggle-group" id="toggleAutoRename">
+                        <button class="toggle-btn" data-auto-rename="true">On</button>
+                        <button class="toggle-btn active" data-auto-rename="false">Off</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 分割JSON入力 -->
+        <div class="split-json-row hidden" id="splitJsonRow">
+            <span class="option-label">分割定義JSON:</span>
+            <textarea id="splitJsonInput" class="split-json-textarea" placeholder='[{"filename": "YYYY-MM-DD_タイトル.md", "start_page": 1, "end_page": 3}, ...]'></textarea>
+        </div>
+
+        <!-- houhi コンテキストファイル -->
+        <div class="context-row hidden" id="contextRow">
+            <span class="context-label">コンテキスト:</span>
+            <input type="text" id="contextFileInput" class="context-input" placeholder="法匹の sample.md のパス（省略可）">
+            <button class="context-browse-btn" id="contextBrowseBtn">参照</button>
+        </div>
+
+        <!-- ドロップゾーン -->
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-message">
+                <div class="drop-icon">📂</div>
+                <div class="drop-text" id="dropText">ここにファイルをドロップ</div>
+                <div class="drop-subtext" id="dropSubtext">または クリックして選択</div>
+            </div>
+        </div>
+
+        <!-- コンソール出力 -->
+        <div class="console-container" id="consoleOutput">
+            <div class="log-line">準備完了。ツールを選択してファイルをドロップしてください。</div>
+        </div>
+
+        <div class="status-bar">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+    </div>
+
+    <script>
+        window.exports = window.exports || {};
+    </script>
+    <script src="renderer.js"></script>
+</body>
+
+</html>
