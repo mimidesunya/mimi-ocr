@@ -5,8 +5,10 @@
 ### 利用できるツール
 
 - `OCR（一般）`: 一般文書向けの Markdown を生成
-- `OCR（houhi）`: 裁判文書向けスタイルで生成
+- `OCR（法匪）`: 裁判文書向けスタイルで生成
 - `ページ結合`: `*_paged.md` のページ境界を整理
+- `文書分割`: JSON 定義に基づいて `_paged.md` と PDF を文書ごとに分割
+- `白紙除去`: OCR 結果をもとに白紙ページを除去した PDF + MD ペアを生成
 
 ### 画面オプション
 
@@ -19,7 +21,8 @@
 
 ### GUI 上の制約
 
-- `ページ結合` 選択時は OCR 関連オプションは無効になります。
+- `ページ結合`・`文書分割`・`白紙除去` 選択時は OCR 関連オプションは無効になります。
+- `文書分割` 選択時は分割定義 JSON の入力欄が表示されます。
 - `ndlocr-only` 選択時は AI と処理モード選択は無効になります。
 - `Claude` 選択時は同期モード固定です。
 
@@ -105,6 +108,32 @@ npm run ocr -- .\samples\born-digital.pdf --prefer_pdf_text
 
 ```powershell
 npm run merge -- .\samples\report_paged.md
+```
+
+### 文書分割
+
+JSON 定義に基づいて OCR 済み `_paged.md` と PDF を文書ごとに分割します。
+
+```powershell
+npm run split -- .\samples\bundle.pdf --json-file .\split-def.json
+```
+
+JSON 形式:
+
+```json
+[
+  {"filename": "2024-01-15_契約書.md", "start_page": 1, "end_page": 5},
+  {"filename": "2024-02-20_報告書.md", "start_page": 6, "end_page": 10}
+]
+```
+
+### ブランクページ除去
+
+OCR 結果を解析し、白紙ページを除去した PDF + MD ペアを生成します。
+
+```powershell
+npm run deblank -- .\samples\scanned.pdf
+npm run deblank -- .\samples\scanned.pdf --threshold 20
 ```
 
 ## 出力の見方

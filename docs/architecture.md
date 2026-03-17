@@ -10,6 +10,8 @@
 | --- | --- |
 | `src/ocr.ts` | OCR CLI の入口。引数解釈、対象分類、各形式の処理開始 |
 | `src/merge_pages.ts` | `*_paged.md` を `*_merged.md` に整形 |
+| `src/split_pages.ts` | JSON 定義に基づいて `_paged.md` + PDF を文書ごとに分割 |
+| `src/remove_blank_pages.ts` | OCR 結果を解析し白紙ページを除去した PDF + MD を生成 |
 | `src/lib/ai_ocr.ts` | 文書形式ごとの本体ロジック。再開、検証、保存を管理 |
 | `src/lib/gemini_batch.ts` | Gemini の同期・インラインバッチ・ファイルバッチ処理 |
 | `src/lib/openai_client.ts` | OpenAI の同期処理と Batch API 連携 |
@@ -66,6 +68,26 @@
 4. 標準出力・標準エラーを専用コンソールウィンドウへ転送する
 
 GUI は OCR ロジックを直接持たず、CLI を安全に包む薄いラッパーです。
+
+GUI のツール一覧:
+
+| ツール | スクリプト | 説明 |
+| --- | --- | --- |
+| OCR（一般） | `src/ocr.js` | 一般文書の OCR 処理 |
+| OCR（法匪） | `src/ocr.js` | 裁判文書を法匪書式で OCR 処理 |
+| ページ結合 | `src/merge_pages.js` | ページマーカーの除去・結合 |
+| 文書分割 | `src/split_pages.js` | JSON 定義に基づく文書分割 |
+| 白紙除去 | `src/remove_blank_pages.js` | 白紙ページ除去した PDF + MD 生成 |
+
+## リトライ
+
+すべての AI プロバイダーの同期モードにリトライ機能があります。
+
+| プロバイダー | 同期リトライ | バッチリトライ |
+| --- | --- | --- |
+| Gemini | 最大 3 回 + 指数バックオフ | `MAX_RETRIES` による未完了バッチ再送 |
+| Claude | 最大 3 回 + 指数バックオフ（SDK 内部リトライとは別） | ― |
+| OpenAI | 最大 `maxRetries` 回 + 指数バックオフ | ― |
 
 ## 再開と永続化
 
