@@ -72,7 +72,7 @@ app.on('window-all-closed', () => {
 // スクリプト定義
 const SCRIPTS = {
     'ocr_general': { path: 'src/ocr.js', name: 'OCR（一般）' },
-    'ocr_houhi':   { path: 'src/ocr.js', name: 'OCR（法匹）' },
+    'ocr_houhi':   { path: 'src/ocr.js', name: 'OCR（法匪）' },
     'merge':       { path: 'src/merge_pages.js', name: 'ページ結合' },
     'split':       { path: 'src/split_pages.js', name: '文書分割' },
     'deblank':     { path: 'src/remove_blank_pages.js', name: '白紙除去' }
