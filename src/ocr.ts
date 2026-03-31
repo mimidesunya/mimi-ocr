@@ -8,6 +8,7 @@
  * - `.doc`
  * - `.odt`
  * - `.pptx`
+ * - 画像ファイル（`.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, `.webp`）
  * - 上記ファイルを含むディレクトリ
  *
  * 出力:
@@ -39,7 +40,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { pdfToText, docToText, docxToText, odtToText, pptxToText, getOcrPrompt } = require('./lib/ai_ocr');
+const { pdfToText, docToText, docxToText, odtToText, pptxToText, imageToText, getOcrPrompt } = require('./lib/ai_ocr');
 const { maybeAutoRenameDocument } = require('./lib/auto_rename');
 
 // ---- スタイル定義 ----
@@ -190,6 +191,10 @@ async function main() {
             if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
             console.log(`\n[PowerPoint 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode})`);
             ocrOutputPath = await pptxToText(filePath, contextInstruction, aiProvider, processMode);
+        } else if ([".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"].includes(ext)) {
+            if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
+            console.log(`\n[画像 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode})`);
+            ocrOutputPath = await imageToText(filePath, contextInstruction, aiProvider, processMode);
         } else {
             console.warn(`[警告] 未対応のファイル形式です: ${path.basename(filePath)}`);
         }
@@ -230,7 +235,10 @@ async function main() {
             .filter(f => {
                 const ext = f.toLowerCase();
                 return ext.endsWith(".pdf") || ext.endsWith(".docx") || ext.endsWith(".doc")
-                    || ext.endsWith(".odt") || ext.endsWith(".pptx");
+                    || ext.endsWith(".odt") || ext.endsWith(".pptx")
+                    || ext.endsWith(".png") || ext.endsWith(".jpg") || ext.endsWith(".jpeg")
+                    || ext.endsWith(".tif") || ext.endsWith(".tiff") || ext.endsWith(".bmp")
+                    || ext.endsWith(".webp");
             })
             .sort();
 

@@ -1152,11 +1152,64 @@ async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemin
     }
 }
 
+async function imageToText(imagePath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
+    const ext = path.extname(imagePath).toLowerCase();
+    const baseName = path.basename(imagePath, ext);
+    const normalPath = path.join(path.dirname(imagePath), baseName + "_paged.md");
+
+    if (fs.existsSync(normalPath)) {
+        console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
+        return normalPath;
+    }
+
+    console.log(`[情報] 画像のOCR処理を開始: ${imagePath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
+
+    try {
+        const imageBuffer = fs.readFileSync(imagePath);
+        let mimeType = "image/jpeg";
+        if (ext === ".png") mimeType = "image/png";
+        else if (ext === ".webp") mimeType = "image/webp";
+        else if (ext === ".gif") mimeType = "image/gif";
+        else if (ext === ".bmp") mimeType = "image/bmp";
+        else if (ext === ".tif" || ext === ".tiff") mimeType = "image/tiff";
+
+        const request = createDocRequest({
+            dataParts: [{
+                inlineData: {
+                    mimeType: mimeType,
+                    data: imageBuffer.toString('base64')
+                }
+            }],
+            numPages: 1
+        }, contextInstruction, false);
+
+        const batchProcessor = aiProvider === 'claude' ? null : new GeminiBatchProcessor();
+        const progressState = { completed: 0, total: 1, startTime: Date.now() };
+        const persistenceFile = `${imagePath}.batch_state.txt`;
+
+        const results = await runSingleBatch([request], batchProcessor, progressState, "image-ocr-job", persistenceFile, aiProvider, processMode);
+        const result = results[0];
+
+        if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
+            let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
+            fs.writeFileSync(normalPath, text, 'utf-8');
+            console.log(`[成功] ${normalPath} に保存されました`);
+            return normalPath;
+        } else {
+            throw new Error(JSON.stringify(result.error || "内容なし"));
+        }
+    } catch (e) {
+        console.error(`[エラー] 画像のOCR処理に失敗しました: ${e.message}`);
+        throw e;
+    }
+}
+
 module.exports = {
     pdfToText,
     docToText,
     docxToText,
     odtToText,
     pptxToText,
+    imageToText,
     getOcrPrompt
 };

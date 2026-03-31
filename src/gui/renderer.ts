@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ツール説明（ホバー表示）
     const toolDescriptions: Record<string, string> = {
-        'ocr_general': '一般文書をOCR処理（PDF / Word / ODT / PPTX）',
+        'ocr_general': '一般文書をOCR処理（PDF / Word / ODT / PPTX / 画像）',
         'ocr_houhi':   '裁判文書を法匪書式でOCR処理',
         'merge':       'OCR済み _paged.md のページマーカーを結合',
         'split':       '_paged.md をJSONの分割定義で文書ごとに分割',
