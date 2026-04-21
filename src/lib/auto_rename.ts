@@ -391,19 +391,61 @@ function buildRenamePairs(oldPath, newPath) {
     return pairs.filter(pair => path.resolve(pair.from).toLowerCase() !== path.resolve(pair.to).toLowerCase());
 }
 
-function applyRenamePairs(pairs) {
-    const existingPairs = pairs.filter(pair => fs.existsSync(pair.from));
+function getPathKey(filePath) {
+    return path.resolve(filePath).toLowerCase();
+}
+
+function findRenameConflict(pairs) {
     const seenTargets = new Set();
 
-    for (const pair of existingPairs) {
-        const targetKey = path.resolve(pair.to).toLowerCase();
+    for (const pair of pairs) {
+        const targetKey = getPathKey(pair.to);
         if (seenTargets.has(targetKey)) {
-            throw new Error(`同じ変更先が重複しています: ${pair.to}`);
+            return `同じ変更先が重複しています: ${pair.to}`;
         }
         seenTargets.add(targetKey);
+
         if (fs.existsSync(pair.to)) {
-            throw new Error(`変更先が既に存在します: ${pair.to}`);
+            return `変更先が既に存在します: ${pair.to}`;
         }
+    }
+
+    return null;
+}
+
+function addSequenceSuffix(filePath, sequence) {
+    const ext = path.extname(filePath);
+    const stem = path.basename(filePath, ext);
+    const dir = path.dirname(filePath);
+    return path.join(dir, `${stem} (${sequence})${ext}`);
+}
+
+function resolveUniqueRenamePath(oldPath, preferredNewPath) {
+    if (getPathKey(oldPath) === getPathKey(preferredNewPath)) {
+        return preferredNewPath;
+    }
+
+    const initialConflict = findRenameConflict(buildRenamePairs(oldPath, preferredNewPath));
+    if (!initialConflict) {
+        return preferredNewPath;
+    }
+
+    for (let sequence = 2; sequence < Number.MAX_SAFE_INTEGER; sequence++) {
+        const candidatePath = addSequenceSuffix(preferredNewPath, sequence);
+        const conflict = findRenameConflict(buildRenamePairs(oldPath, candidatePath));
+        if (!conflict) {
+            return candidatePath;
+        }
+    }
+
+    throw new Error(`空いている変更先が見つかりません: ${preferredNewPath}`);
+}
+
+function applyRenamePairs(pairs) {
+    const existingPairs = pairs.filter(pair => fs.existsSync(pair.from));
+    const conflict = findRenameConflict(existingPairs);
+    if (conflict) {
+        throw new Error(conflict);
     }
 
     const renamedPairs = [];
@@ -455,10 +497,15 @@ async function maybeAutoRenameDocument(sourcePath, ocrOutputPath = null, aiProvi
     const decision = parseDecisionText(text);
     const newBaseName = `${decision.date}_${decision.documentType}_${decision.title}`;
     const ext = path.extname(absSourcePath);
-    const newPath = path.join(path.dirname(absSourcePath), `${newBaseName}${ext}`);
+    const preferredNewPath = path.join(path.dirname(absSourcePath), `${newBaseName}${ext}`);
+    const newPath = resolveUniqueRenamePath(absSourcePath, preferredNewPath);
 
     if (path.resolve(newPath).toLowerCase() === absSourcePath.toLowerCase()) {
         return absSourcePath;
+    }
+
+    if (getPathKey(newPath) !== getPathKey(preferredNewPath)) {
+        console.log(`[自動改名] 同名ファイルがあるため連番を付与します: ${path.basename(newPath)}`);
     }
 
     const renamePairs = buildRenamePairs(absSourcePath, newPath);
