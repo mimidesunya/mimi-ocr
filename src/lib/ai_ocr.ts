@@ -256,6 +256,92 @@ function extractPagesFromMarkdown(content) {
     return pageMap;
 }
 
+function describeWriteError(filePath, error, label = '出力ファイル') {
+    if (error?.code === 'EISDIR') {
+        return `${label}と同名のフォルダが既に存在します: ${filePath}`;
+    }
+    if (error?.code === 'ENOENT') {
+        return `${label}の保存先フォルダが見つかりません: ${path.dirname(filePath)}`;
+    }
+    if (error?.code === 'EPERM') {
+        return `${label}を作成または更新できませんでした: ${filePath} (EPERM)。保存先フォルダの権限、クラウド同期、同名ファイルのロックをご確認ください。`;
+    }
+    if (error?.code === 'EACCES') {
+        return `${label}へのアクセスが拒否されました: ${filePath} (EACCES)。保存先フォルダの権限をご確認ください。`;
+    }
+    return `${label}の書き込みに失敗しました: ${filePath} (${error?.message || error})`;
+}
+
+function hasExistingOutputFile(filePath, label = '出力ファイル') {
+    if (!fs.existsSync(filePath)) {
+        return false;
+    }
+
+    try {
+        const stat = fs.statSync(filePath);
+        if (!stat.isFile()) {
+            throw Object.assign(new Error('not a file'), { code: 'EISDIR' });
+        }
+        return true;
+    } catch (e) {
+        throw new Error(describeWriteError(filePath, e, label));
+    }
+}
+
+function ensureWritableOutputPath(filePath, label = '出力ファイル') {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+        throw new Error(`${label}の保存先フォルダが見つかりません: ${dir}`);
+    }
+
+    if (hasExistingOutputFile(filePath, label)) {
+        try {
+            fs.accessSync(filePath, fs.constants.W_OK);
+            return;
+        } catch (e) {
+            throw new Error(describeWriteError(filePath, e, label));
+        }
+    }
+
+    const probePath = path.join(
+        dir,
+        `.mimi-ocr-write-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`
+    );
+
+    try {
+        fs.writeFileSync(probePath, '', { flag: 'wx' });
+    } catch (e) {
+        throw new Error(describeWriteError(filePath, e, label));
+    } finally {
+        if (fs.existsSync(probePath)) {
+            try {
+                fs.unlinkSync(probePath);
+            } catch (_e) {
+            }
+        }
+    }
+}
+
+function writeTextFileWithContext(filePath, content, label = '出力ファイル') {
+    try {
+        fs.writeFileSync(filePath, content, 'utf-8');
+    } catch (e) {
+        throw new Error(describeWriteError(filePath, e, label));
+    }
+}
+
+function removeFileIfExists(filePath, label = 'ファイル') {
+    if (!fs.existsSync(filePath)) {
+        return;
+    }
+
+    try {
+        fs.unlinkSync(filePath);
+    } catch (e) {
+        console.warn(`[警告] ${label}を削除できませんでした: ${filePath} (${e.message})`);
+    }
+}
+
 function normalizeNdlocrText(rawText) {
     const lines = rawText.replace(/\r\n/g, '\n').split('\n');
     const merged = [];
@@ -439,10 +525,13 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
     // 出力ファイルが既に存在する場合はスキップ
     const normalPath = pdfPath.replace(/\.pdf$/i, "_paged.md");
-    if (fs.existsSync(normalPath)) {
+    if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
         return normalPath;
     }
+    const errorPath = pdfPath.replace(/\.pdf$/i, "_ERROR_paged.md");
+    ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
+    ensureWritableOutputPath(errorPath, 'OCR中間結果ファイル');
 
     console.log(`[情報] AIプロバイダー: ${aiProvider} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${useNdlocr ? (ndlocrOnly ? 'Only' : 'Pre-OCR') : 'Off'} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
     const pdfBuffer = await fsPromises.readFile(pdfPath);
@@ -452,7 +541,6 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     const actualEndPage = endPage || totalPages;
     console.log(`[情報] 処理開始: ${pdfPath} (${totalPages} ページ中 ${startPage} から ${actualEndPage} ページまで)`);
 
-    const errorPath = pdfPath.replace(/\.pdf$/i, "_ERROR_paged.md");
     // normalPath は関数冒頭で定義済み
 
     let pageMap = new Map();
@@ -700,7 +788,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                     tmpMarkdown += `### -- Begin Page ${i} --\n\n[ERROR: OCR Failed for page ${i}]\n\n`;
                 }
             }
-            fs.writeFileSync(errorPath, tmpMarkdown, 'utf-8');
+            writeTextFileWithContext(errorPath, tmpMarkdown, 'OCR中間結果ファイル');
             console.log(`[情報] 中間結果を ${errorPath} に保存しました (${pageMap.size} ページ完了)`);
         };
 
@@ -823,24 +911,25 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     }
 
     if (hasError) {
-        fs.writeFileSync(errorPath, allMarkdown, 'utf-8');
+        writeTextFileWithContext(errorPath, allMarkdown, 'OCR中間結果ファイル');
         console.log(`[警告] エラーを含んだ状態で ${errorPath} に保存されました`);
-        if (fs.existsSync(normalPath)) fs.unlinkSync(normalPath);
+        removeFileIfExists(normalPath, 'OCR結果ファイル');
         return errorPath;
     } else {
-        fs.writeFileSync(normalPath, allMarkdown, 'utf-8');
+        writeTextFileWithContext(normalPath, allMarkdown, 'OCR結果ファイル');
         console.log(`[成功] ${normalPath} に保存されました`);
-        if (fs.existsSync(errorPath)) fs.unlinkSync(errorPath);
+        removeFileIfExists(errorPath, 'OCR中間結果ファイル');
         return normalPath;
     }
 }
 
 async function docToText(docPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
     const normalPath = docPath.replace(/\.doc$/i, "_paged.md");
-    if (fs.existsSync(normalPath)) {
+    if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
         return normalPath;
     }
+    ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
     console.log(`[情報] Word文書(doc)の解析を開始: ${docPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
@@ -870,7 +959,7 @@ async function docToText(docPath, contextInstruction = "", aiProvider = "gemini"
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            fs.writeFileSync(normalPath, text, 'utf-8');
+            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -885,10 +974,11 @@ async function docToText(docPath, contextInstruction = "", aiProvider = "gemini"
 
 async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
     const normalPath = docxPath.replace(/\.docx$/i, "_paged.md");
-    if (fs.existsSync(normalPath)) {
+    if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
         return normalPath;
     }
+    ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
     console.log(`[情報] Word文書(docx)の解析を開始: ${docxPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
@@ -940,7 +1030,7 @@ async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemin
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            fs.writeFileSync(normalPath, text, 'utf-8');
+            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -955,10 +1045,11 @@ async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemin
 
 async function odtToText(odtPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
     const normalPath = odtPath.replace(/\.odt$/i, "_paged.md");
-    if (fs.existsSync(normalPath)) {
+    if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
         return normalPath;
     }
+    ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
     console.log(`[情報] ODT文書の解析を開始: ${odtPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
@@ -1015,7 +1106,7 @@ async function odtToText(odtPath, contextInstruction = "", aiProvider = "gemini"
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            fs.writeFileSync(normalPath, text, 'utf-8');
+            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -1060,10 +1151,11 @@ The following parts represent a Japanese PowerPoint (.pptx) presentation:
 
 async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
     const normalPath = pptxPath.replace(/\.pptx$/i, "_paged.md");
-    if (fs.existsSync(normalPath)) {
+    if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
         return normalPath;
     }
+    ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
     console.log(`[情報] PowerPoint文書の解析を開始: ${pptxPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
@@ -1140,7 +1232,7 @@ async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemin
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            fs.writeFileSync(normalPath, text, 'utf-8');
+            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -1157,10 +1249,11 @@ async function imageToText(imagePath, contextInstruction = "", aiProvider = "gem
     const baseName = path.basename(imagePath, ext);
     const normalPath = path.join(path.dirname(imagePath), baseName + "_paged.md");
 
-    if (fs.existsSync(normalPath)) {
+    if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
         return normalPath;
     }
+    ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
 
     console.log(`[情報] 画像のOCR処理を開始: ${imagePath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
@@ -1192,7 +1285,7 @@ async function imageToText(imagePath, contextInstruction = "", aiProvider = "gem
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            fs.writeFileSync(normalPath, text, 'utf-8');
+            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
