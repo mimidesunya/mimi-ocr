@@ -44,7 +44,10 @@ Copy-Item config.template.json config.json
   "ndlocrLite": {
     "pythonPath": "python",
     "repoPath": "PATH_TO_NDLOCR_LITE_REPO",
-    "parallelJobs": "auto"
+    "parallelJobs": "auto",
+    "pageChunkSize": 8,
+    "workerStartDelayMs": 1500,
+    "imageDpi": 300
   }
 }
 ```
@@ -102,10 +105,16 @@ Copy-Item config.template.json config.json
 | `pythonPath` | 任意 | `python` など実行コマンド |
 | `repoPath` | `ndlocr` 利用時に必須 | `ndlocr-lite` リポジトリの絶対パス |
 | `parallelJobs` | 任意 | `auto` または数値 |
+| `pageChunkSize` | 任意 | ndlocr 1回の起動で処理するページ数 |
+| `workerStartDelayMs` | 任意 | 並列ワーカーの起動をずらす間隔（ミリ秒） |
+| `imageDpi` | 任意 | PDF画像化の解像度（dpi） |
 
 補足:
 
-- `parallelJobs: "auto"` の場合、CPU数を元に `1` 以上 `8` 以下で自動調整されます。
+- `parallelJobs: "auto"` の場合、CPU数を元に `1` 以上 `4` 以下で自動調整されます。
+- `pageChunkSize` は既定で `8` です。小さくすると終盤の負荷は分散しやすくなりますが、ndlocr の起動回数が増えます。
+- `workerStartDelayMs` は既定で `1500` です。`0` にすると従来に近く、全ワーカーをすぐ起動します。
+- `imageDpi` は既定で `300` です。大容量PDFでメモリ不足が出る場合は `200` 前後まで下げると安定しやすくなります。
 - `repoPath/src/ocr.py` が存在しないと失敗します。
 
 ## 現行コードで参照される設定

@@ -21,6 +21,9 @@
   "ndlocrLite": {
     "pythonPath": "python",
     "repoPath": "PATH_TO_NDLOCR_LITE_REPO",
-    "parallelJobs": "auto"
+    "parallelJobs": "auto",
+    "pageChunkSize": 8,
+    "workerStartDelayMs": 1500,
+    "imageDpi": 300
   }
 }

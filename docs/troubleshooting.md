@@ -110,6 +110,20 @@ Copy-Item config.template.json config.json
 - `--batch_size` を調整する
 - 埋め込みテキストがある PDF なら `--prefer_pdf_text` を使う
 
+## `FATAL ERROR: Reached heap limit`（Node.js のメモリ不足）
+
+症状:
+
+- `Reached heap limit Allocation failed - JavaScript heap out of memory`
+- 大きい PDF を `ndlocr` 付きで処理すると途中で停止する
+
+対処:
+
+- `config.json` の `ndlocrLite.parallelJobs` を `1` か `2` に下げる
+- `config.json` の `ndlocrLite.pageChunkSize` を `4` か `6` に下げる
+- `config.json` の `ndlocrLite.imageDpi` を `200` 前後に下げる
+- まずは `--start_page` / `--end_page` で区間を分けて実行する
+
 ## Claude でバッチを選べない
 
 理由:
