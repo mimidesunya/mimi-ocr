@@ -11,6 +11,9 @@ const NAMING_BACK_PAGES = 4;
 const TITLE_MAX_LENGTH = 80;
 const TEXT_EXCERPT_MAX_CHARS = 12000;
 const AUTO_RENAME_PATTERN = /^\d{4}-\d{2}-\d{2}_[^_]+_.+$/;
+const EVIDENCE_PREFIX_PATTERN = '甲|乙|丙|丁|戊|己|庚|辛|壬|癸|子|丑|寅|卯|辰|巳|午|未|申|酉|戌|亥';
+const HOUHI_AUTO_RENAME_PATTERN = new RegExp(`^(?:\\d{4}-\\d{2}-\\d{2}_[^_]+|(?:${EVIDENCE_PREFIX_PATTERN})\\d+ \\d{4}-\\d{2}-\\d{2}_[^_]+)$`);
+const HOUHI_NAMING_MODE = 'houhi';
 const DOCUMENT_TYPES = Object.freeze([
     '図書',
     '記事',
@@ -26,13 +29,55 @@ const DOCUMENT_TYPES = Object.freeze([
     'その他'
 ]);
 
-function isAutoRenameFormatted(filePath) {
+const EVIDENCE_LABEL_PATTERN = new RegExp(`^(?:${EVIDENCE_PREFIX_PATTERN})\\d+$`);
+
+function isAutoRenameFormatted(filePath, namingMode = 'general') {
     const ext = path.extname(filePath);
     const stem = ext ? path.basename(filePath, ext) : path.basename(filePath);
-    return AUTO_RENAME_PATTERN.test(stem);
+    const pattern = namingMode === HOUHI_NAMING_MODE ? HOUHI_AUTO_RENAME_PATTERN : AUTO_RENAME_PATTERN;
+    return pattern.test(stem);
 }
 
-function getNamingPrompt() {
+function getNamingPrompt(namingMode = 'general') {
+    if (namingMode === HOUHI_NAMING_MODE) {
+        return `
+# ROLE
+日本語の裁判文書・法律文書の冒頭と末尾を読み、ファイル名用のメタデータを決めるアシスタントです。
+
+# TASK
+与えられた文書の最初の${NAMING_FRONT_PAGES}ページと最後の${NAMING_BACK_PAGES}ページだけを読み、次の4項目を決めてください。
+
+1. date
+- 文書を識別するのに最も適切な作成日・発行日・証拠成立日
+- 和暦は西暦に変換
+- 形式は必ず YYYY-MM-DD
+- 年しか分からなければ YYYY-00-00
+- 年月まで分かれば YYYY-MM-00
+- 全く分からなければ今日の日付を使う
+
+2. isEvidence
+- 甲号証、乙号証、丙号証などの証拠書類なら true
+- 訴状、答弁書、準備書面、申立書、証拠説明書、送付書、事務連絡などは false
+
+3. evidenceLabel
+- isEvidence が true の場合だけ、文書中の表示に従って「甲1」「乙2」のように返す
+- 「甲第1号証」「甲1号証」のような表記でも、必ず「甲1」に正規化する
+- isEvidence が false の場合は空文字にする
+
+4. title
+- 日本語の簡潔な表題
+- 可能なら文書中の正式タイトル・標目・証拠の内容を優先
+- 証拠の場合、証拠番号そのものは title に含めない
+- 不明なら内容を要約した短い表題を作る
+- 40文字程度まで
+- 拡張子や説明文は付けない
+
+# OUTPUT
+JSONのみを返してください。コードブロックや説明は禁止です。
+{"date":"YYYY-MM-DD","isEvidence":false,"evidenceLabel":"","title":"表題"}
+`;
+    }
+
     return `
 # ROLE
 日本語文書の冒頭と末尾を読み、ファイル名用のメタデータを決めるアシスタントです。
@@ -96,6 +141,19 @@ function sanitizeTitle(title) {
     return value || '表題不明';
 }
 
+function sanitizeEvidenceLabel(label) {
+    let value = normalizeWhitespace(label)
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+        .replace(/[_]+/g, ' ')
+        .replace(/\s+/g, '')
+        .replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+        .trim();
+
+    value = value.replace(new RegExp(`^(${EVIDENCE_PREFIX_PATTERN})第?(\\d+)号証?$`), '$1$2');
+
+    return EVIDENCE_LABEL_PATTERN.test(value) ? value : '';
+}
+
 function normalizeDateValue(raw) {
     const match = String(raw || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!match) return getTodayDateString();
@@ -112,7 +170,16 @@ function normalizeDateValue(raw) {
     return `${year}-${month}-${day}`;
 }
 
-function normalizeDecision(raw) {
+function normalizeDecision(raw, namingMode = 'general') {
+    if (namingMode === HOUHI_NAMING_MODE) {
+        const title = sanitizeTitle(raw?.title || raw?.documentTitle || raw?.name || '');
+        const date = normalizeDateValue(raw?.date);
+        const evidenceLabel = sanitizeEvidenceLabel(raw?.evidenceLabel || raw?.evidenceNumber || raw?.exhibitNumber || raw?.exhibitLabel || '');
+        const isEvidence = Boolean(raw?.isEvidence || evidenceLabel);
+
+        return { date, title, isEvidence, evidenceLabel };
+    }
+
     const documentType = DOCUMENT_TYPES.includes(raw?.documentType)
         ? raw.documentType
         : DOCUMENT_TYPES.includes(raw?.type)
@@ -131,7 +198,7 @@ function stripCodeFence(text) {
     return fenced ? fenced[1].trim() : trimmed;
 }
 
-function parseDecisionText(text) {
+function parseDecisionText(text, namingMode = 'general') {
     const cleaned = stripCodeFence(text);
     const candidates = [];
     const fullMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -143,16 +210,21 @@ function parseDecisionText(text) {
     for (const candidate of candidates) {
         try {
             const parsed = JSON.parse(candidate);
-            return normalizeDecision(parsed);
+            return normalizeDecision(parsed, namingMode);
         } catch (_e) {
         }
     }
 
-    return {
+    const fallback = {
         date: getTodayDateString(),
-        documentType: 'その他',
         title: sanitizeTitle(cleaned.split('\n')[0] || '')
     };
+
+    if (namingMode === HOUHI_NAMING_MODE) {
+        return { ...fallback, isEvidence: false, evidenceLabel: '' };
+    }
+
+    return { ...fallback, documentType: 'その他' };
 }
 
 function getResponseText(result) {
@@ -290,7 +362,7 @@ function readExcerptFromExistingOutput(sourcePath, preferredOutputPath = null) {
     return '';
 }
 
-async function createPdfSubsetRequest(pdfPath) {
+async function createPdfSubsetRequest(pdfPath, namingMode = 'general') {
     const pdfBuffer = fs.readFileSync(pdfPath);
     const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
     const totalPages = srcDoc.getPageCount();
@@ -312,25 +384,36 @@ async function createPdfSubsetRequest(pdfPath) {
                             data: Buffer.from(subsetBytes).toString('base64')
                         }
                     },
-                    { text: getNamingPrompt() }
+                    { text: getNamingPrompt(namingMode) }
                 ]
             }
         ]
     };
 }
 
-function createTextExcerptRequest(excerpt) {
+function createTextExcerptRequest(excerpt, namingMode = 'general') {
     return {
         contents: [
             {
                 role: 'user',
                 parts: [
                     { text: "--- OCR TEXT START ---\n" + excerpt + "\n--- OCR TEXT END ---" },
-                    { text: getNamingPrompt() }
+                    { text: getNamingPrompt(namingMode) }
                 ]
             }
         ]
     };
+}
+
+function buildAutoRenameBaseName(decision, namingMode = 'general') {
+    if (namingMode === HOUHI_NAMING_MODE) {
+        if (decision.isEvidence && decision.evidenceLabel) {
+            return `${decision.evidenceLabel} ${decision.date}_${decision.title}`;
+        }
+        return `${decision.date}_${decision.title}`;
+    }
+
+    return `${decision.date}_${decision.documentType}_${decision.title}`;
 }
 
 async function runNamingRequest(request, aiProvider = 'gemini') {
@@ -468,9 +551,9 @@ function applyRenamePairs(pairs) {
     }
 }
 
-async function maybeAutoRenameDocument(sourcePath, ocrOutputPath = null, aiProvider = 'gemini') {
+async function maybeAutoRenameDocument(sourcePath, ocrOutputPath = null, aiProvider = 'gemini', namingMode = 'general') {
     const absSourcePath = path.resolve(sourcePath);
-    if (isAutoRenameFormatted(absSourcePath)) {
+    if (isAutoRenameFormatted(absSourcePath, namingMode)) {
         console.log(`[自動改名] 既に形式通りのため変更しません: ${path.basename(absSourcePath)}`);
         return absSourcePath;
     }
@@ -478,10 +561,10 @@ async function maybeAutoRenameDocument(sourcePath, ocrOutputPath = null, aiProvi
     let request = null;
     const excerpt = readExcerptFromExistingOutput(absSourcePath, ocrOutputPath);
     if (excerpt) {
-        request = createTextExcerptRequest(excerpt);
+        request = createTextExcerptRequest(excerpt, namingMode);
     } else if (path.extname(absSourcePath).toLowerCase() === '.pdf') {
         console.log(`[自動改名] OCR結果に先頭${NAMING_FRONT_PAGES}ページと末尾${NAMING_BACK_PAGES}ページが無いため、元PDFの該当ページを直接判定します`);
-        request = await createPdfSubsetRequest(absSourcePath);
+        request = await createPdfSubsetRequest(absSourcePath, namingMode);
     } else {
         console.warn(`[自動改名] 先頭${NAMING_FRONT_PAGES}ページと末尾${NAMING_BACK_PAGES}ページ相当のOCRテキストが得られなかったため、改名をスキップします: ${path.basename(absSourcePath)}`);
         return absSourcePath;
@@ -494,8 +577,8 @@ async function maybeAutoRenameDocument(sourcePath, ocrOutputPath = null, aiProvi
     }
 
     const text = getResponseText(result);
-    const decision = parseDecisionText(text);
-    const newBaseName = `${decision.date}_${decision.documentType}_${decision.title}`;
+    const decision = parseDecisionText(text, namingMode);
+    const newBaseName = buildAutoRenameBaseName(decision, namingMode);
     const ext = path.extname(absSourcePath);
     const preferredNewPath = path.join(path.dirname(absSourcePath), `${newBaseName}${ext}`);
     const newPath = resolveUniqueRenamePath(absSourcePath, preferredNewPath);

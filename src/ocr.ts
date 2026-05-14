@@ -201,7 +201,7 @@ async function main() {
 
         if (ocrOutputPath && autoRename) {
             try {
-                await maybeAutoRenameDocument(filePath, ocrOutputPath, aiProvider);
+                await maybeAutoRenameDocument(filePath, ocrOutputPath, aiProvider, target);
             } catch (err) {
                 console.warn(`[警告] 自動改名に失敗しました: ${path.basename(filePath)} / ${err.message}`);
             }
