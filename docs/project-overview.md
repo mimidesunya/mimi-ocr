@@ -42,6 +42,14 @@
 - OCR 結果を解析し、白紙ページを除いた PDF と MD のペアを生成します。
 - 本文が閾値（デフォルト 10 文字）以下のページを白紙と判定します。
 
+### 6. PDFページ抽出・結合
+
+- PDF と同じ場所にある OCR 結果を使い、PDFページまたは印刷ページでページを指定できます。
+- `1-3,7,8` のような範囲指定に対応します。
+- 複数PDFから抽出したページを、指定順に1つのPDFと1つのMarkdownへ結合できます。
+- 抽出後のMarkdownでは、`### -- Begin Page N --` を1から連番に振り直します。
+- 1ページに2面割り付ける出力に対応し、左から右・右から左の両方向を選べます。
+
 ## 出力ルール
 
 ### PDF
@@ -49,18 +57,30 @@
 - 成功時: `元ファイル名_paged.md`
 - 一部失敗時: `元ファイル名_ERROR_paged.md`
 - 既に `元ファイル名_paged.md` がある場合はスキップします
+- Markdown 末尾に不可視な実行設定メタデータを付与します
 
 ### Word / ODT / PowerPoint
 
 - 成功時: 対応する `元ファイル名_paged.md`
+- Markdown 末尾に不可視な実行設定メタデータを付与します
 
 ### ページ結合後
 
 - `*_paged.md` から `*_merged.md` を作成します
 
+### PDFページ抽出・結合後
+
+- 単一PDFの通常抽出: `元ファイル名_pages.pdf` / `元ファイル名_pages.md`
+- 複数PDFの結合: `先頭PDF名_combined_pages.pdf` / `先頭PDF名_combined_pages.md`
+- 2面割付時: `_2up` が付きます
+
+### 実行設定メタデータ
+
+OCR 直後の Markdown 末尾には、`<!-- mimi-ocr-settings ... -->` 形式の HTMLコメントが付きます。内容はビルド番号、生成日時、入力ファイル名、入力種別、ターゲット、AIプロバイダー、モデル、処理モード、ページ範囲、`ndlocr` 利用状態などです。APIキーは含めません。
+
 ## 利用インターフェース
 
-- CLI: `npm run ocr`, `npm run merge`, `npm run split`, `npm run deblank`
+- CLI: `npm run ocr`, `npm run merge`, `npm run split`, `npm run deblank`, `npm run pdf-pages`
 - GUI: `npm run gui`
 - Windowsランチャー: `npm run build:launcher` で `bin/mimi-ocr.exe` を生成
 
@@ -72,4 +92,5 @@
 4. 必要なら `merge` を実行して `*_merged.md` を作る
 5. 必要なら `split` で文書ごとに分割する
 6. 必要なら `deblank` で白紙ページを除去する
-7. 結果を手直しして最終原稿にする
+7. 必要なら `pdf-pages` でPDFページを抽出・結合・2面割付する
+8. 結果を手直しして最終原稿にする

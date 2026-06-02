@@ -127,3 +127,14 @@ Copy-Item config.template.json config.json
 - `ndlocrLite`
 
 `houhi` のような追加セクションを `config.json` に置いても、現行の `src` 配下コードからは使われません。houhi 用のサンプル Markdown は `--context-file` または GUI のコンテキスト入力で指定します。
+
+## OCR結果メタデータに記録される設定
+
+OCR 直後の Markdown 末尾には、`<!-- mimi-ocr-settings ... -->` 形式で実行設定が記録されます。`config.json` からは主に次の値だけを参照します。
+
+- 使用AIプロバイダーのモデル名（例: `gemini.chatModel`, `claude.chatModel`, `openai.chatModel`）
+- `ndlocrLite.parallelJobs`
+- `ndlocrLite.pageChunkSize`
+- `ndlocrLite.imageDpi`
+
+APIキー、トークン、絶対パス全体は記録しません。`ndlocrLite.repoPath` や `pythonPath` も OCR結果メタデータには含めません。

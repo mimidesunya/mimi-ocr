@@ -75,7 +75,8 @@ const SCRIPTS = {
     'ocr_houhi':   { path: 'src/ocr.js', name: 'OCR（法匪）' },
     'merge':       { path: 'src/merge_pages.js', name: 'ページ結合' },
     'split':       { path: 'src/split_pages.js', name: '文書分割' },
-    'deblank':     { path: 'src/remove_blank_pages.js', name: '白紙除去' }
+    'deblank':     { path: 'src/remove_blank_pages.js', name: '白紙除去' },
+    'pdf_pages':   { path: 'src/pdf_pages.js', name: 'PDFページ抽出・結合' }
 };
 
 // ファイル選択ダイアログ（コンテキストファイル用）
@@ -99,7 +100,8 @@ ipcMain.handle('execute-script', async (event, {
     autoRename,
     batchSize,
     contextFile,
-    splitJson
+    splitJson,
+    pdfPageOptions
 }) => {
     if (!SCRIPTS[scriptKey]) {
         throw new Error('無効なスクリプトキーです');
@@ -111,6 +113,7 @@ ipcMain.handle('execute-script', async (event, {
     const isMerge = scriptKey === 'merge';
     const isSplit = scriptKey === 'split';
     const isDeblank = scriptKey === 'deblank';
+    const isPdfPages = scriptKey === 'pdf_pages';
     const selectedOcrMode = ocrMode || 'ai';
     const useNdlocr = selectedOcrMode === 'ndlocr_ai' || selectedOcrMode === 'ndlocr_only';
     const ndlocrOnly = selectedOcrMode === 'ndlocr_only';
@@ -128,6 +131,17 @@ ipcMain.handle('execute-script', async (event, {
     if (isSplit) {
         if (splitJsonTempFile) {
             scriptArgs.push('--json-file', splitJsonTempFile);
+        }
+    } else if (isPdfPages) {
+        const pages = (pdfPageOptions?.pages || '').trim();
+        const filePages = Array.isArray(pdfPageOptions?.filePages) ? pdfPageOptions.filePages : [];
+        if (filePages.length === 0 && pages) {
+            scriptArgs.push('--pages', pages);
+        }
+        scriptArgs.push('--page-type', pdfPageOptions?.pageType === 'printed' ? 'printed' : 'pdf');
+        if (pdfPageOptions?.twoUp) {
+            scriptArgs.push('--two-up');
+            scriptArgs.push('--direction', pdfPageOptions?.direction === 'rtl' ? 'rtl' : 'ltr');
         }
     } else if (!isMerge && !isDeblank) {
         // ターゲット（houhi / general）
@@ -167,7 +181,17 @@ ipcMain.handle('execute-script', async (event, {
     }
 
     // ファイルパスを末尾に追加
-    scriptArgs.push(...filePaths);
+    if (isPdfPages && Array.isArray(pdfPageOptions?.filePages) && pdfPageOptions.filePages.length > 0) {
+        for (const item of pdfPageOptions.filePages) {
+            const filePath = item?.path;
+            const pages = item?.pages;
+            if (filePath && pages) {
+                scriptArgs.push(`${filePath}::${pages}`);
+            }
+        }
+    } else {
+        scriptArgs.push(...filePaths);
+    }
 
     // コンソールウィンドウを作成
     const consoleWin = createConsoleWindow(script.name, filePaths.length);
@@ -194,6 +218,12 @@ ipcMain.handle('execute-script', async (event, {
         consoleWin.webContents.send('console-info', '分割定義JSONに基づいてファイルを分割します');
     } else if (isDeblank) {
         consoleWin.webContents.send('console-info', 'OCR結果をもとに白紙ページを除去します');
+    } else if (isPdfPages) {
+        const pageTypeLabel = pdfPageOptions?.pageType === 'printed' ? '印刷ページ' : 'PDFページ';
+        const twoUpLabel = pdfPageOptions?.twoUp
+            ? `2面割付 (${pdfPageOptions?.direction === 'rtl' ? '右から左' : '左から右'})`
+            : '通常抽出';
+        consoleWin.webContents.send('console-info', `ページ指定: ${pdfPageOptions?.pages || '(未指定)'} / 種別: ${pageTypeLabel} / ${twoUpLabel}`);
     } else if (!isMerge) {
         const target = scriptKey === 'ocr_houhi' ? 'houhi' : 'general';
         const ocrLabel = ndlocrOnly ? 'ndlocr-only' : (useNdlocr ? 'ndlocr+AI' : 'AIのみ');

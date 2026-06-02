@@ -12,12 +12,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const batchSizeInput  = document.getElementById('batchSizeInput') as HTMLInputElement;
     const splitJsonRow    = document.getElementById('splitJsonRow') as HTMLElement;
     const splitJsonInput  = document.getElementById('splitJsonInput') as HTMLTextAreaElement;
+    const pdfPagesRow     = document.getElementById('pdfPagesRow') as HTMLElement;
+    const pdfPagesFileList = document.getElementById('pdfPagesFileList') as HTMLElement;
+    const pdfPagesRunBtn  = document.getElementById('pdfPagesRunBtn') as HTMLButtonElement;
 
     const ocrBtns      = document.querySelectorAll<HTMLElement>('[data-ocr-mode]');
     const aiBtns       = document.querySelectorAll<HTMLElement>('[data-ai]');
     const modeBtns     = document.querySelectorAll<HTMLElement>('[data-mode]');
     const pdfTextBtns  = document.querySelectorAll<HTMLElement>('[data-pdftext]');
     const autoRenameBtns = document.querySelectorAll<HTMLElement>('[data-auto-rename]');
+    const pdfPageTypeBtns = document.querySelectorAll<HTMLElement>('[data-pdf-page-type]');
+    const pdfTwoUpBtns = document.querySelectorAll<HTMLElement>('[data-pdf-two-up]');
+    const pdfDirectionBtns = document.querySelectorAll<HTMLElement>('[data-pdf-direction]');
 
     const toggleAi     = document.getElementById('toggleAi') as HTMLElement;
     const toggleMode   = document.getElementById('toggleMode') as HTMLElement;
@@ -32,15 +38,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const labelBatch   = document.getElementById('labelBatch') as HTMLElement;
 
     // ---- 状態 ----
-    type ScriptKey = 'ocr_general' | 'ocr_houhi' | 'merge' | 'split' | 'deblank';
+    type ScriptKey = 'ocr_general' | 'ocr_houhi' | 'merge' | 'split' | 'deblank' | 'pdf_pages';
     let currentScript: ScriptKey = 'ocr_general';
     let currentAiProvider = 'gemini';
     let currentProcessMode = 'sync';
     let currentOcrMode = 'ai';       // ai | ndlocr_ai | ndlocr_only
     let currentPreferPdfText = false;
     let currentAutoRename = false;
+    let currentPdfPageType = 'pdf';  // pdf | printed
+    let currentPdfTwoUp = false;
+    let currentPdfDirection = 'ltr'; // ltr | rtl
+    let selectedPdfPageFiles: string[] = [];
+    let pdfPageRanges: Record<string, string> = {};
+    let draggedPdfPageIndex: number | null = null;
 
     const isOcrTool = (key: string) => key === 'ocr_general' || key === 'ocr_houhi';
+    const isPdfPagesTool = (key: string) => key === 'pdf_pages';
 
     // ツール説明（ホバー表示）
     const toolDescriptions: Record<string, string> = {
@@ -48,10 +61,28 @@ document.addEventListener('DOMContentLoaded', () => {
         'ocr_houhi':   '裁判文書を法匪書式でOCR処理',
         'merge':       'OCR済み _paged.md のページマーカーを結合',
         'split':       '_paged.md をJSONの分割定義で文書ごとに分割',
-        'deblank':     'OCR結果をもとに白紙ページを除去したPDFとMDを生成'
+        'deblank':     'OCR結果をもとに白紙ページを除去したPDFとMDを生成',
+        'pdf_pages':   'OCR結果をもとにPDFページを抽出・結合・2面割付'
     };
 
     // ---- ツール選択 ----
+    function selectTool(script: ScriptKey, card: HTMLElement) {
+        toolCards.forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        currentScript = script;
+        log(`ツール変更: ${card.querySelector<HTMLElement>('.tool-name')!.textContent}`);
+        applyConstraints();
+    }
+
+    async function handleFilesForCurrentTool(files: string[]) {
+        if (files.length === 0) return;
+        if (currentScript === 'pdf_pages') {
+            setPdfPageFiles(files);
+            return;
+        }
+        await executeWith(files);
+    }
+
     toolCards.forEach(card => {
         const script = card.dataset.script as ScriptKey;
 
@@ -66,11 +97,28 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         card.addEventListener('click', () => {
-            toolCards.forEach(c => c.classList.remove('active'));
-            card.classList.add('active');
-            currentScript = script;
-            log(`ツール変更: ${card.querySelector<HTMLElement>('.tool-name')!.textContent}`);
-            applyConstraints();
+            selectTool(script, card);
+        });
+
+        card.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            card.classList.add('drag-over');
+        });
+
+        card.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            card.classList.remove('drag-over');
+        });
+
+        card.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            card.classList.remove('drag-over');
+            const files = Array.from(e.dataTransfer!.files).map(f => (window as any).electronAPI.getPathForFile(f));
+            selectTool(script, card);
+            await handleFilesForCurrentTool(files);
         });
     });
 
@@ -133,6 +181,44 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // ---- PDFページ抽出設定 ----
+    pdfPageTypeBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            pdfPageTypeBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentPdfPageType = btn.dataset.pdfPageType || 'pdf';
+            log(`ページ種別: ${currentPdfPageType === 'printed' ? '印刷ページ' : 'PDFページ'}`);
+        });
+    });
+
+    pdfTwoUpBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            pdfTwoUpBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentPdfTwoUp = btn.dataset.pdfTwoUp === 'true';
+            log(`2面割付: ${currentPdfTwoUp ? 'On' : 'Off'}`);
+            applyConstraints();
+        });
+    });
+
+    pdfDirectionBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
+            pdfDirectionBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentPdfDirection = btn.dataset.pdfDirection || 'ltr';
+            log(`2面方向: ${currentPdfDirection === 'rtl' ? '右から左' : '左から右'}`);
+        });
+    });
+
+    pdfPagesRunBtn.addEventListener('click', async () => {
+        if (selectedPdfPageFiles.length === 0) {
+            log('先にPDFファイルをドロップまたは選択してください。', 'error');
+            return;
+        }
+        await executeWith(selectedPdfPageFiles);
+    });
+
     // ---- コンテキストファイル参照 ----
     contextBrowseBtn.addEventListener('click', async () => {
         const filePath = await (window as any).electronAPI.openFileDialog();
@@ -169,6 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applyConstraints() {
         const ocr = isOcrTool(currentScript);
+        const pdfPages = isPdfPagesTool(currentScript);
         const ndlocrOnly = currentOcrMode === 'ndlocr_only';
         const aiEnabled = ocr && (!ndlocrOnly || currentAutoRename);
         const modeEnabled = ocr && !ndlocrOnly;
@@ -193,6 +280,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // 分割JSON入力行
         const showSplitJson = currentScript === 'split';
         splitJsonRow.classList.toggle('hidden', !showSplitJson);
+
+        const showPdfPages = pdfPages;
+        pdfPagesRow.classList.toggle('hidden', !showPdfPages);
+        pdfDirectionBtns.forEach(b => b.classList.toggle('disabled', !currentPdfTwoUp));
+        renderPdfPageFileList();
     }
 
     function setGroupDisabled(
@@ -228,8 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dropZone.classList.remove('drag-over');
 
         const files = Array.from(e.dataTransfer!.files).map(f => (window as any).electronAPI.getPathForFile(f));
-        if (files.length === 0) return;
-        await executeWith(files);
+        await handleFilesForCurrentTool(files);
     });
 
     // クリックでファイル選択
@@ -240,10 +331,139 @@ document.addEventListener('DOMContentLoaded', () => {
         input.onchange = async (e) => {
             const target = e.target as HTMLInputElement;
             const files = Array.from(target.files || []).map(f => (window as any).electronAPI.getPathForFile(f));
-            if (files.length > 0) await executeWith(files);
+            if (files.length > 0) {
+                await handleFilesForCurrentTool(files);
+            }
         };
         input.click();
     });
+
+    function basename(filePath: string): string {
+        return String(filePath || '').split(/[\\/]/).pop() || filePath;
+    }
+
+    function setPdfPageFiles(files: string[]) {
+        selectedPdfPageFiles = files
+            .filter(f => /\.pdf$/i.test(f))
+            .sort((a, b) => basename(a).localeCompare(basename(b), 'ja'));
+        const nextRanges: Record<string, string> = {};
+        for (const file of selectedPdfPageFiles) {
+            nextRanges[file] = pdfPageRanges[file] || '';
+        }
+        pdfPageRanges = nextRanges;
+        renderPdfPageFileList();
+        if (selectedPdfPageFiles.length === 0) {
+            log('PDFファイルを選択してください。', 'error');
+        } else {
+            log(`${selectedPdfPageFiles.length} 個のPDFをファイル名順で登録しました。ページ指定を確認して実行してください。`);
+        }
+    }
+
+    function movePdfPageFile(fromIndex: number, toIndex: number) {
+        if (fromIndex === toIndex) return;
+        if (fromIndex < 0 || fromIndex >= selectedPdfPageFiles.length) return;
+        if (toIndex < 0 || toIndex >= selectedPdfPageFiles.length) return;
+        const [item] = selectedPdfPageFiles.splice(fromIndex, 1);
+        selectedPdfPageFiles.splice(toIndex, 0, item);
+        renderPdfPageFileList();
+    }
+
+    function removePdfPageFile(index: number) {
+        const [removed] = selectedPdfPageFiles.splice(index, 1);
+        if (removed) delete pdfPageRanges[removed];
+        renderPdfPageFileList();
+    }
+
+    function renderPdfPageFileList() {
+        if (!pdfPagesFileList) return;
+        pdfPagesFileList.innerHTML = '';
+        if (currentScript !== 'pdf_pages') return;
+
+        if (selectedPdfPageFiles.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'pdf-pages-empty';
+            empty.textContent = 'PDFファイルをここへドロップ、または下のドロップゾーンで選択してください。';
+            pdfPagesFileList.appendChild(empty);
+            return;
+        }
+
+        for (let index = 0; index < selectedPdfPageFiles.length; index++) {
+            const filePath = selectedPdfPageFiles[index];
+            const row = document.createElement('div');
+            row.className = 'pdf-pages-file-row';
+            row.draggable = true;
+            row.dataset.index = String(index);
+
+            row.addEventListener('dragstart', () => {
+                draggedPdfPageIndex = index;
+            });
+            row.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                row.classList.add('drag-over');
+            });
+            row.addEventListener('dragleave', () => {
+                row.classList.remove('drag-over');
+            });
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                row.classList.remove('drag-over');
+                if (draggedPdfPageIndex === null) return;
+                movePdfPageFile(draggedPdfPageIndex, index);
+                draggedPdfPageIndex = null;
+            });
+
+            const handle = document.createElement('button');
+            handle.type = 'button';
+            handle.className = 'pdf-pages-icon-btn pdf-pages-drag-handle';
+            handle.textContent = '≡';
+            handle.title = 'ドラッグして並べ替え';
+
+            const name = document.createElement('div');
+            name.className = 'pdf-pages-file-name';
+            name.title = filePath;
+            name.textContent = basename(filePath);
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'context-input';
+            input.placeholder = '1-3,7,8';
+            input.value = pdfPageRanges[filePath] || '';
+            input.addEventListener('input', () => {
+                pdfPageRanges[filePath] = input.value.trim();
+            });
+
+            const upBtn = document.createElement('button');
+            upBtn.type = 'button';
+            upBtn.className = 'pdf-pages-icon-btn';
+            upBtn.textContent = '↑';
+            upBtn.title = '上へ移動';
+            upBtn.disabled = index === 0;
+            upBtn.addEventListener('click', () => movePdfPageFile(index, index - 1));
+
+            const downBtn = document.createElement('button');
+            downBtn.type = 'button';
+            downBtn.className = 'pdf-pages-icon-btn';
+            downBtn.textContent = '↓';
+            downBtn.title = '下へ移動';
+            downBtn.disabled = index === selectedPdfPageFiles.length - 1;
+            downBtn.addEventListener('click', () => movePdfPageFile(index, index + 1));
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'pdf-pages-icon-btn';
+            removeBtn.textContent = '×';
+            removeBtn.title = 'リストから外す';
+            removeBtn.addEventListener('click', () => removePdfPageFile(index));
+
+            row.appendChild(handle);
+            row.appendChild(name);
+            row.appendChild(input);
+            row.appendChild(upBtn);
+            row.appendChild(downBtn);
+            row.appendChild(removeBtn);
+            pdfPagesFileList.appendChild(row);
+        }
+    }
 
     async function executeWith(files: string[]) {
         log(`${files.length} 個のファイルを処理中 (${currentScript})...`);
@@ -267,6 +487,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        if (currentScript === 'pdf_pages') {
+            const pageInputs = files.map(file => (pdfPageRanges[file] || '').trim());
+            if (pageInputs.some(value => !value)) {
+                log('各PDFのページ指定を入力してください。例: 1-3,7,8', 'error');
+                return;
+            }
+            if (pageInputs.some(value => !/^\d+(\s*-\s*\d+)?(\s*,\s*\d+(\s*-\s*\d+)?)*$/.test(value))) {
+                log('ページ指定の形式が不正です。例: 1-3,7,8', 'error');
+                return;
+            }
+        }
+
         setLoading(true);
         try {
             const result = await (window as any).electronAPI.executeScript(
@@ -279,7 +511,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentAutoRename,
                 parseInt(batchSizeInput.value, 10) || 4,
                 contextFileInput.value.trim() || null,
-                currentScript === 'split' ? splitJsonInput.value.trim() : null
+                currentScript === 'split' ? splitJsonInput.value.trim() : null,
+                currentScript === 'pdf_pages' ? {
+                    filePages: files.map(file => ({ path: file, pages: (pdfPageRanges[file] || '').trim() })),
+                    pageType: currentPdfPageType,
+                    twoUp: currentPdfTwoUp,
+                    direction: currentPdfDirection
+                } : null
             );
             if (result.success) {
                 log('処理が正常に完了しました。', 'success');

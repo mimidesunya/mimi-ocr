@@ -34,6 +34,8 @@ Copy-Item config.template.json config.json
 npm run build
 ```
 
+`npm run build` は TypeScript を `dist/` に出力したあと、`dist/src/lib/build_info.json` を生成します。ここに入る短いタイムスタンプ形式の `number` が、OCR結果 Markdown 末尾の `build` として記録されます。
+
 ## GUI 起動
 
 ```powershell
@@ -47,9 +49,10 @@ Electron GUI が起動し、ドラッグアンドドロップで文書を処理�
 ```powershell
 npm run ocr -- <入力パス>
 npm run merge -- <入力パス>
+npm run pdf-pages -- --pages 1-3,7,8 <PDFファイル>
 ```
 
-`npm run ocr` と `npm run merge` は、先に TypeScript をビルドしてから `dist/src/*.js` を実行します。
+各 `npm run ...` コマンドは、先に TypeScript をビルドしてから `dist/src/*.js` を実行します。
 
 ## Windows ランチャーを作る
 
@@ -65,6 +68,7 @@ npm run build:launcher
 
 - ランチャーは `npm run gui` を起動するだけなので、`node_modules` が存在する前提です。
 - `src/launcher/Launcher.csproj` は `net10.0-windows` / `win-x64` を対象にしています。
+- ランチャー自体の生成は `dist/src/lib/build_info.json` を更新しません。OCR実行用のビルド番号を更新したい場合は `npm run build` または `npm run gui` / `npm run ocr` を実行してください。
 
 ## セキュリティ注意
 

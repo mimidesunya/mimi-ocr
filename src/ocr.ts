@@ -172,29 +172,35 @@ async function main() {
     const processFile = async (filePath) => {
         const ext = path.extname(filePath).toLowerCase();
         let ocrOutputPath = null;
+        const metadataOptions = {
+            target,
+            contextFilePath: target === 'houhi'
+                ? (contextFilePath ? path.resolve(contextFilePath) : DEFAULT_HOUHI_TEMPLATE)
+                : null
+        };
         if (ext === ".pdf") {
             console.log(`\n[PDF 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode}, Pre-OCR: ${useNdlocr})`);
-            ocrOutputPath = await pdfToText(filePath, batchSize, startPage, endPage, contextInstruction, aiProvider, processMode, useNdlocr, ndlocrOnly, preferPdfText);
+            ocrOutputPath = await pdfToText(filePath, batchSize, startPage, endPage, contextInstruction, aiProvider, processMode, useNdlocr, ndlocrOnly, preferPdfText, metadataOptions);
         } else if (ext === ".docx") {
             if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
             console.log(`\n[Word 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode})`);
-            ocrOutputPath = await docxToText(filePath, contextInstruction, aiProvider, processMode);
+            ocrOutputPath = await docxToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
         } else if (ext === ".doc") {
             if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
             console.log(`\n[Word(doc) 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode})`);
-            ocrOutputPath = await docToText(filePath, contextInstruction, aiProvider, processMode);
+            ocrOutputPath = await docToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
         } else if (ext === ".odt") {
             if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
             console.log(`\n[ODT 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode})`);
-            ocrOutputPath = await odtToText(filePath, contextInstruction, aiProvider, processMode);
+            ocrOutputPath = await odtToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
         } else if (ext === ".pptx") {
             if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
             console.log(`\n[PowerPoint 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode})`);
-            ocrOutputPath = await pptxToText(filePath, contextInstruction, aiProvider, processMode);
+            ocrOutputPath = await pptxToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
         } else if ([".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"].includes(ext)) {
             if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
             console.log(`\n[画像 処理] 開始: ${path.basename(filePath)} (AI: ${aiProvider}, モード: ${processMode})`);
-            ocrOutputPath = await imageToText(filePath, contextInstruction, aiProvider, processMode);
+            ocrOutputPath = await imageToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
         } else {
             console.warn(`[警告] 未対応のファイル形式です: ${path.basename(filePath)}`);
         }

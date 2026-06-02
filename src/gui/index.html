@@ -96,6 +96,13 @@
             box-shadow: 0 0 12px rgba(100, 181, 246, 0.2);
         }
 
+        .tool-card.drag-over {
+            background: rgba(100, 181, 246, 0.28);
+            border-color: var(--accent-color);
+            box-shadow: 0 0 16px rgba(100, 181, 246, 0.35);
+            transform: translateY(-1px) scale(0.99);
+        }
+
         .tool-icon { font-size: 1.1rem; color: var(--accent-color); }
         .tool-name  { font-size: 0.8rem; font-weight: 500; }
 
@@ -259,6 +266,71 @@
         .split-json-textarea:focus { border-color: var(--accent-color); }
         .split-json-textarea::placeholder { color: rgba(255, 255, 255, 0.25); }
 
+        .pdf-pages-file-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        .pdf-pages-file-row {
+            display: grid;
+            grid-template-columns: 22px minmax(0, 1fr) 110px 24px 24px 24px;
+            gap: 6px;
+            align-items: center;
+            padding: 3px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.16);
+        }
+
+        .pdf-pages-file-row.drag-over { outline: 1px solid var(--accent-color); }
+
+        .pdf-pages-file-name {
+            font-size: 0.72rem;
+            color: var(--secondary-text-color);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .pdf-pages-icon-btn {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--secondary-text-color);
+            cursor: pointer;
+            font-size: 0.72rem;
+            line-height: 1;
+            padding: 0;
+        }
+
+        .pdf-pages-icon-btn:hover {
+            color: #fff;
+            border-color: var(--accent-color);
+            background: rgba(100, 181, 246, 0.15);
+        }
+
+        .pdf-pages-icon-btn:disabled {
+            opacity: 0.25;
+            cursor: not-allowed;
+        }
+
+        .pdf-pages-drag-handle { cursor: grab; }
+
+        .pdf-pages-empty {
+            font-size: 0.72rem;
+            color: rgba(255, 255, 255, 0.35);
+            padding: 6px 2px;
+        }
+
+        .pdf-pages-run-row {
+            display: flex;
+            justify-content: flex-end;
+        }
+
         /* ドロップゾーン */
         .drop-zone {
             margin: 0 20px 10px;
@@ -368,6 +440,10 @@
                 <div class="tool-icon">🧹</div>
                 <div class="tool-name">白紙除去</div>
             </div>
+            <div class="tool-card" data-script="pdf_pages">
+                <div class="tool-icon">🧩</div>
+                <div class="tool-name">PDF抽出</div>
+            </div>
         </div>
 
         <div class="separator"></div>
@@ -435,6 +511,38 @@
         <div class="split-json-row hidden" id="splitJsonRow">
             <span class="option-label">分割定義JSON:</span>
             <textarea id="splitJsonInput" class="split-json-textarea" placeholder='[{"filename": "YYYY-MM-DD_タイトル.md", "start_page": 1, "end_page": 3}, ...]'></textarea>
+        </div>
+
+        <!-- PDFページ抽出設定 -->
+        <div class="split-json-row hidden" id="pdfPagesRow">
+            <span class="option-label">PDFごとのページ指定:</span>
+            <div class="pdf-pages-file-list" id="pdfPagesFileList"></div>
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label">種別:</span>
+                    <div class="toggle-group" id="togglePdfPageType">
+                        <button class="toggle-btn active" data-pdf-page-type="pdf">PDF</button>
+                        <button class="toggle-btn" data-pdf-page-type="printed">印刷</button>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="option-label">2面:</span>
+                    <div class="toggle-group" id="togglePdfTwoUp">
+                        <button class="toggle-btn active" data-pdf-two-up="false">Off</button>
+                        <button class="toggle-btn" data-pdf-two-up="true">On</button>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="option-label">方向:</span>
+                    <div class="toggle-group" id="togglePdfDirection">
+                        <button class="toggle-btn active" data-pdf-direction="ltr">左→右</button>
+                        <button class="toggle-btn" data-pdf-direction="rtl">右→左</button>
+                    </div>
+                </div>
+            </div>
+            <div class="pdf-pages-run-row">
+                <button class="context-browse-btn" id="pdfPagesRunBtn">実行</button>
+            </div>
         </div>
 
         <!-- houhi コンテキストファイル -->

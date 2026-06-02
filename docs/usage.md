@@ -9,6 +9,7 @@
 - `ページ結合`: `*_paged.md` のページ境界を整理
 - `文書分割`: JSON 定義に基づいて `_paged.md` と PDF を文書ごとに分割
 - `白紙除去`: OCR 結果をもとに白紙ページを除去した PDF + MD ペアを生成
+- `PDF抽出`: OCR 結果をもとに PDF ページを抽出・結合・2面割付
 
 ### 画面オプション
 
@@ -18,11 +19,15 @@
 - `PDFテキスト`: 埋め込みテキスト優先のオンオフ
 - `バッチサイズ`: PDF を何ページずつ処理するか
 - `コンテキスト`: houhi モードで使うサンプル Markdown
+- `PDF抽出` 選択時は、ページ指定、PDFページ/印刷ページ、2面割付、ページ方向を指定できます。
 
 ### GUI 上の制約
 
+- ツールカードへ直接ファイルをドロップすると、そのツールに切り替わって処理します。
 - `ページ結合`・`文書分割`・`白紙除去` 選択時は OCR 関連オプションは無効になります。
 - `文書分割` 選択時は分割定義 JSON の入力欄が表示されます。
+- `PDF抽出` 選択時は、先にPDFファイルをドロップまたは選択して登録します。その後、ファイルごとのページ指定を入力して `実行` を押します。
+- 登録されたPDFはファイル名順に並び、上下ボタン、削除ボタン、ドラッグで順番を変更できます。
 - `ndlocr-only` 選択時は AI と処理モード選択は無効になります。
 - `Claude` 選択時は同期モード固定です。
 
@@ -136,6 +141,43 @@ npm run deblank -- .\samples\scanned.pdf
 npm run deblank -- .\samples\scanned.pdf --threshold 20
 ```
 
+### PDFページ抽出・結合
+
+PDF と同じ場所にある OCR 結果（`*_paged.md` または `*_ERROR_paged.md`）を使ってページを解決します。OCR結果がないPDFは処理できません。抽出後は PDF と同名の Markdown も出力し、Markdown 内の `### -- Begin Page N --` は抽出後の連番に振り直します。
+
+ページ指定は `1-3,7,8` のように書きます。この例では 1 から 3 ページと 7、8 ページを抽出します。
+
+```powershell
+npm run pdf-pages -- --pages 1-3,7,8 .\samples\report.pdf
+```
+
+印刷ページで指定する場合:
+
+```powershell
+npm run pdf-pages -- --page-type printed --pages 10-12 .\samples\report.pdf
+```
+
+複数PDFを指定すると、抽出ページを指定順に1つのPDFへ結合し、対応するMarkdownも1つに結合します。
+
+```powershell
+npm run pdf-pages -- --pages 1-3 .\samples\a.pdf .\samples\b.pdf
+```
+
+PDFごとに別のページ範囲を指定する場合は、`PDF::ページ指定` 形式を使います。
+
+```powershell
+npm run pdf-pages -- ".\samples\a.pdf::1-3" ".\samples\b.pdf::7,8"
+```
+
+2面割付:
+
+```powershell
+npm run pdf-pages -- --pages 1-8 --two-up --direction ltr .\samples\report.pdf
+npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\samples\report.pdf
+```
+
+`--direction ltr` は左から右、`--direction rtl` は右から左に配置します。
+
 ## 出力の見方
 
 ### OCR 直後
@@ -143,12 +185,46 @@ npm run deblank -- .\samples\scanned.pdf --threshold 20
 - `### -- Begin Page N --`
 - `### -- End --`
 - 必要に応じて `(Printed Page X)` や `(Continuation)` が付く
+- ファイル末尾に `<!-- mimi-ocr-settings ... -->` 形式の不可視メタデータが付く
 
 ### ページ結合後
 
 - ページマーカーが取り除かれる
 - 続きページは段落がつながる
 - そうでないページ境界は空行に変わる
+
+### 末尾メタデータ
+
+OCR 直後の Markdown には、末尾に HTMLコメント形式で実行設定が記録されます。Markdownビューでは通常表示されません。
+
+```md
+<!-- mimi-ocr-settings
+{
+  "tool": "mimi-ocr",
+  "build": "260602-093804",
+  "generatedAt": "2026-06-02T00:39:00.000Z",
+  "source": "sample.pdf",
+  "input": "pdf",
+  "settings": {
+    "target": "general",
+    "ai": {
+      "provider": "gemini",
+      "model": "gemini-2.5-pro"
+    },
+    "processMode": "sync",
+    "batchSize": 4,
+    "pages": {
+      "start": 1,
+      "end": 12,
+      "total": 12
+    },
+    "ndlocr": "off"
+  }
+}
+-->
+```
+
+`preferPdfText`、`hasError`、`ndlocrSettings` は該当する場合だけ出力されます。APIキーは記録されません。
 
 ## 再実行時の挙動
 

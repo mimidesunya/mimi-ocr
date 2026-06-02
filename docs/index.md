@@ -17,8 +17,10 @@
 - AI プロバイダーとして Gemini / Claude / OpenAI を使い分ける
 - PDF では `ndlocr-lite` を前処理または単独OCRとして併用できる
 - OCR結果のページ境界を後処理して読みやすい Markdown に整える
+- OCR結果の末尾に、ビルド番号や実行設定を不可視メタデータとして残す
 - OCR結果に基づく文書分割（JSON定義で複数ファイルに分割）
 - OCR結果に基づくブランクページ除去（白紙ページを除いたPDF+MDペアを生成）
+- OCR結果に基づくPDFページ抽出・結合・2面割付
 - Electron GUI と CLI の両方から操作できる
 
 ## 主な出力ファイル
@@ -27,6 +29,12 @@
 - `*_ERROR_paged.md`: 一部失敗を含む途中結果
 - `*_merged.md`: ページ境界を整理した後処理済み Markdown
 - `*_noblank.pdf` / `*_noblank_paged.md`: ブランクページ除去後のファイル
+- `*_pages.pdf` / `*_pages.md`: PDFページ抽出後のファイル
+- `*_combined_pages.pdf` / `*_combined_pages.md`: 複数PDFから抽出・結合したファイル
+- `*_pages_2up.pdf` / `*_pages_2up.md`: 2面割付したファイル
+- `*_combined_pages_2up.pdf` / `*_combined_pages_2up.md`: 複数PDFから抽出・結合して2面割付したファイル
+
+OCR 直後の Markdown 末尾には `<!-- mimi-ocr-settings ... -->` 形式の不可視メタデータが付きます。通常表示では見えませんが、ソースからビルド番号、モデル、処理モード、ページ範囲などを確認できます。APIキーは含まれません。
 
 ## 補足
 

@@ -414,6 +414,89 @@ function writeTextFileWithContext(filePath, content, label = '出力ファイル
     }
 }
 
+function compactMetadataObject(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map(item => compactMetadataObject(item))
+            .filter(item => item !== undefined);
+    }
+    if (value && typeof value === 'object') {
+        const result = {};
+        for (const [key, childValue] of Object.entries(value)) {
+            const compacted = compactMetadataObject(childValue);
+            if (compacted === undefined) continue;
+            result[key] = compacted;
+        }
+        return Object.keys(result).length > 0 ? result : undefined;
+    }
+    if (value === null || value === undefined || value === '') return undefined;
+    return value;
+}
+
+function normalizeMetadataPath(filePath) {
+    if (!filePath) return null;
+    return path.basename(filePath);
+}
+
+function loadBuildInfo() {
+    const buildInfoPath = path.join(__dirname, 'build_info.json');
+    try {
+        const content = fs.readFileSync(buildInfoPath, 'utf-8');
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed === 'object') {
+            return parsed.number || 'dev';
+        }
+    } catch (_e) {
+    }
+    return 'dev';
+}
+
+function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}) {
+    const config = loadConfig() || {};
+    const aiProvider = runtimeOptions.aiProvider || 'gemini';
+    const providerConfig = config?.[aiProvider] || {};
+    const ndlocrConfig = config?.ndlocrLite || {};
+    const metadata = compactMetadataObject({
+        tool: 'mimi-ocr',
+        build: loadBuildInfo(),
+        generatedAt: new Date().toISOString(),
+        source: normalizeMetadataPath(sourcePath),
+        input: inputType,
+        settings: {
+            target: runtimeOptions.target || 'general',
+            contextFile: normalizeMetadataPath(runtimeOptions.contextFilePath),
+            ai: {
+                provider: aiProvider,
+                model: providerConfig.chatModel || providerConfig.model
+            },
+            processMode: runtimeOptions.processMode || 'batch',
+            batchSize: runtimeOptions.batchSize ?? null,
+            pages: {
+                start: runtimeOptions.startPage ?? null,
+                end: runtimeOptions.endPage ?? null,
+                requestedEnd: runtimeOptions.requestedEndPage ?? null,
+                total: runtimeOptions.totalPages ?? null
+            },
+            ndlocr: runtimeOptions.ndlocrOnly ? 'only' : (runtimeOptions.useNdlocr ? 'pre' : 'off'),
+            ndlocrSettings: (runtimeOptions.useNdlocr || runtimeOptions.ndlocrOnly) ? {
+                parallelJobs: ndlocrConfig.parallelJobs,
+                pageChunkSize: ndlocrConfig.pageChunkSize,
+                imageDpi: ndlocrConfig.imageDpi
+            } : null,
+            preferPdfText: runtimeOptions.preferPdfText ? true : null,
+            hasError: runtimeOptions.hasError ? true : null
+        }
+    });
+
+    const json = JSON.stringify(metadata, null, 2).replace(/--/g, '\\u002d\\u002d');
+    return `<!-- mimi-ocr-settings\n${json}\n-->`;
+}
+
+function appendOcrSettingsComment(content, sourcePath, inputType, runtimeOptions: any = {}) {
+    const body = String(content || '').replace(/^\uFEFF/, '').trimEnd();
+    return `${body}\n\n${buildOcrSettingsComment(sourcePath, inputType, runtimeOptions)}\n`;
+}
+
 function removeFileIfExists(filePath, label = 'ファイル') {
     if (!fs.existsSync(filePath)) {
         return;
@@ -672,7 +755,7 @@ async function extractEmbeddedTextFromPdfPages(pdfPath, pageNumbers) {
     return result;
 }
 
-async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, contextInstruction = "", aiProvider = "gemini", processMode = "batch", useNdlocr = false, ndlocrOnly = false, preferPdfText = false) {
+async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, contextInstruction = "", aiProvider = "gemini", processMode = "batch", useNdlocr = false, ndlocrOnly = false, preferPdfText = false, metadataOptions = {}) {
     if (ndlocrOnly) {
         useNdlocr = true;
     }
@@ -939,7 +1022,21 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                     tmpMarkdown += buildOcrErrorPageContent(i, pageErrorMap.get(i));
                 }
             }
-            writeTextFileWithContext(errorPath, tmpMarkdown, 'OCR中間結果ファイル');
+            const contentWithMetadata = appendOcrSettingsComment(tmpMarkdown, pdfPath, 'pdf', {
+                ...metadataOptions,
+                aiProvider,
+                processMode,
+                batchSize,
+                startPage,
+                endPage: actualEndPage,
+                requestedEndPage: endPage,
+                totalPages,
+                useNdlocr,
+                ndlocrOnly,
+                preferPdfText,
+                hasError: true
+            });
+            writeTextFileWithContext(errorPath, contentWithMetadata, 'OCR中間結果ファイル');
             console.log(`[情報] 中間結果を ${errorPath} に保存しました (${pageMap.size} ページ完了)`);
         };
 
@@ -1071,19 +1168,45 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     }
 
     if (hasError) {
-        writeTextFileWithContext(errorPath, allMarkdown, 'OCR中間結果ファイル');
+        writeTextFileWithContext(errorPath, appendOcrSettingsComment(allMarkdown, pdfPath, 'pdf', {
+            ...metadataOptions,
+            aiProvider,
+            processMode,
+            batchSize,
+            startPage,
+            endPage: actualEndPage,
+            requestedEndPage: endPage,
+            totalPages,
+            useNdlocr,
+            ndlocrOnly,
+            preferPdfText,
+            hasError: true
+        }), 'OCR中間結果ファイル');
         console.log(`[警告] エラーを含んだ状態で ${errorPath} に保存されました`);
         removeFileIfExists(normalPath, 'OCR結果ファイル');
         return errorPath;
     } else {
-        writeTextFileWithContext(normalPath, allMarkdown, 'OCR結果ファイル');
+        writeTextFileWithContext(normalPath, appendOcrSettingsComment(allMarkdown, pdfPath, 'pdf', {
+            ...metadataOptions,
+            aiProvider,
+            processMode,
+            batchSize,
+            startPage,
+            endPage: actualEndPage,
+            requestedEndPage: endPage,
+            totalPages,
+            useNdlocr,
+            ndlocrOnly,
+            preferPdfText,
+            hasError: false
+        }), 'OCR結果ファイル');
         console.log(`[成功] ${normalPath} に保存されました`);
         removeFileIfExists(errorPath, 'OCR中間結果ファイル');
         return normalPath;
     }
 }
 
-async function docToText(docPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
+async function docToText(docPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch", metadataOptions = {}) {
     const normalPath = docPath.replace(/\.doc$/i, "_paged.md");
     if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
@@ -1119,7 +1242,12 @@ async function docToText(docPath, contextInstruction = "", aiProvider = "gemini"
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
+            writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, docPath, 'doc', {
+                ...metadataOptions,
+                aiProvider,
+                processMode,
+                hasError: false
+            }), 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -1132,7 +1260,7 @@ async function docToText(docPath, contextInstruction = "", aiProvider = "gemini"
     }
 }
 
-async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
+async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch", metadataOptions = {}) {
     const normalPath = docxPath.replace(/\.docx$/i, "_paged.md");
     if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
@@ -1190,7 +1318,12 @@ async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemin
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
+            writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, docxPath, 'docx', {
+                ...metadataOptions,
+                aiProvider,
+                processMode,
+                hasError: false
+            }), 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -1203,7 +1336,7 @@ async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemin
     }
 }
 
-async function odtToText(odtPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
+async function odtToText(odtPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch", metadataOptions = {}) {
     const normalPath = odtPath.replace(/\.odt$/i, "_paged.md");
     if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
@@ -1266,7 +1399,12 @@ async function odtToText(odtPath, contextInstruction = "", aiProvider = "gemini"
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
+            writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, odtPath, 'odt', {
+                ...metadataOptions,
+                aiProvider,
+                processMode,
+                hasError: false
+            }), 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -1309,7 +1447,7 @@ The following parts represent a Japanese PowerPoint (.pptx) presentation:
 `;
 }
 
-async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
+async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemini", processMode = "batch", metadataOptions = {}) {
     const normalPath = pptxPath.replace(/\.pptx$/i, "_paged.md");
     if (hasExistingOutputFile(normalPath, 'OCR結果ファイル')) {
         console.log(`[スキップ] 出力ファイルが既に存在します: ${normalPath}`);
@@ -1392,7 +1530,12 @@ async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemin
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
+            writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, pptxPath, 'pptx', {
+                ...metadataOptions,
+                aiProvider,
+                processMode,
+                hasError: false
+            }), 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
@@ -1404,7 +1547,7 @@ async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemin
     }
 }
 
-async function imageToText(imagePath, contextInstruction = "", aiProvider = "gemini", processMode = "batch") {
+async function imageToText(imagePath, contextInstruction = "", aiProvider = "gemini", processMode = "batch", metadataOptions = {}) {
     const ext = path.extname(imagePath).toLowerCase();
     const baseName = path.basename(imagePath, ext);
     const normalPath = path.join(path.dirname(imagePath), baseName + "_paged.md");
@@ -1445,7 +1588,12 @@ async function imageToText(imagePath, contextInstruction = "", aiProvider = "gem
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-            writeTextFileWithContext(normalPath, text, 'OCR結果ファイル');
+            writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, imagePath, 'image', {
+                ...metadataOptions,
+                aiProvider,
+                processMode,
+                hasError: false
+            }), 'OCR結果ファイル');
             console.log(`[成功] ${normalPath} に保存されました`);
             return normalPath;
         } else {
