@@ -9,6 +9,7 @@
 | ファイル | 役割 |
 | --- | --- |
 | `src/ocr.ts` | OCR CLI の入口。引数解釈、対象分類、各形式の処理開始 |
+| `src/transcribe_audio.ts` | 音声ファイルを発言者分離つき Markdown / 反訳書へ変換 |
 | `src/merge_pages.ts` | `*_paged.md` を `*_merged.md` に整形 |
 | `src/split_pages.ts` | JSON 定義に基づいて `_paged.md` + PDF を文書ごとに分割 |
 | `src/remove_blank_pages.ts` | OCR 結果を解析し白紙ページを除去した PDF + MD を生成 |
@@ -88,8 +89,8 @@ GUI のツール一覧:
 
 | ツール | スクリプト | 説明 |
 | --- | --- | --- |
-| OCR（一般） | `src/ocr.js` | 一般文書の OCR 処理 |
-| OCR（法匪） | `src/ocr.js` | 裁判文書を法匪書式で OCR 処理 |
+| OCR | `src/ocr.js` | 一般文書または法匪書式の OCR 処理 |
+| 音声認識 | `src/transcribe_audio.js` | OpenAI / Gemini による発言者分離つき音声認識 |
 | ページ結合 | `src/merge_pages.js` | ページマーカーの除去・結合 |
 | 文書分割 | `src/split_pages.js` | JSON 定義に基づく文書分割 |
 | 白紙除去 | `src/remove_blank_pages.js` | 白紙ページ除去した PDF + MD 生成 |

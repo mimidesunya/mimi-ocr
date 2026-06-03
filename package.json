@@ -11,6 +11,7 @@
     "split": "npm run build && node dist/src/split_pages.js",
     "deblank": "npm run build && node dist/src/remove_blank_pages.js",
     "pdf-pages": "npm run build && node dist/src/pdf_pages.js",
+    "transcribe": "npm run build && node dist/src/transcribe_audio.js",
     "build:launcher": "dotnet publish src/launcher/Launcher.csproj -c Release -o bin"
   },
   "dependencies": {

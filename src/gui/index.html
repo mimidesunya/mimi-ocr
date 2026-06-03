@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>mimi-ocr</title>
+    <title>MIMI OCR</title>
     <style>
         :root {
             --bg-color: rgba(20, 25, 30, 0.88);
@@ -192,20 +192,7 @@
         .batch-size-input:focus { border-color: var(--accent-color); }
         .batch-size-input:disabled { opacity: 0.35; cursor: not-allowed; }
 
-        /* コンテキストファイル行 */
-        .context-row {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 0 20px;
-            margin-bottom: 6px;
-            transition: opacity 0.2s;
-        }
-
-        .context-row.hidden { opacity: 0; pointer-events: none; }
-
-        .context-label { font-size: 0.72rem; color: var(--secondary-text-color); white-space: nowrap; }
-
+        /* 小型入力・操作ボタン */
         .context-input {
             flex: 1;
             padding: 4px 8px;
@@ -415,18 +402,18 @@
     <div class="app-container">
         <!-- ヘッダー -->
         <div class="header">
-            <h1>mimi-ocr</h1>
+            <h1>MIMI OCR</h1>
         </div>
 
         <!-- ツール選択 -->
         <div class="tools-grid">
-            <div class="tool-card active" data-script="ocr_general">
+            <div class="tool-card active" data-script="ocr">
                 <div class="tool-icon">🔍</div>
-                <div class="tool-name">OCR（一般）</div>
+                <div class="tool-name">OCR</div>
             </div>
-            <div class="tool-card" data-script="ocr_houhi">
-                <div class="tool-icon">⚖️</div>
-                <div class="tool-name">OCR（法匪）</div>
+            <div class="tool-card" data-script="transcribe_audio">
+                <div class="tool-icon">🎙️</div>
+                <div class="tool-name">音声認識</div>
             </div>
             <div class="tool-card" data-script="merge">
                 <div class="tool-icon">📑</div>
@@ -450,6 +437,28 @@
 
         <!-- OCRオプション -->
         <div class="options-section">
+            <!-- OCR出力スタイル -->
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label" id="labelOcrTarget">出力:</span>
+                    <div class="toggle-group" id="toggleOcrTarget">
+                        <button class="toggle-btn active" data-ocr-target="general">一般</button>
+                        <button class="toggle-btn" data-ocr-target="houhi">法匪</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 音声認識モデル -->
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label" id="labelAudioModel">音声AI:</span>
+                    <div class="toggle-group" id="toggleAudioModel">
+                        <button class="toggle-btn active" data-audio-model="gemini:gemini-3.5-flash">Gemini 3.5</button>
+                        <button class="toggle-btn" data-audio-model="openai:gpt-4o-transcribe-diarize">OpenAI diarize</button>
+                    </div>
+                </div>
+            </div>
+
             <!-- OCRエンジン -->
             <div class="selector-row">
                 <div class="selector-group">
@@ -504,6 +513,20 @@
                         <button class="toggle-btn active" data-auto-rename="false">Off</button>
                     </div>
                 </div>
+                <div class="selector-group">
+                    <span class="option-label" id="labelFormattedRename">形式済み:</span>
+                    <div class="toggle-group" id="toggleFormattedRename">
+                        <button class="toggle-btn active" data-skip-formatted-rename="false">再判定</button>
+                        <button class="toggle-btn" data-skip-formatted-rename="true">スキップ</button>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="option-label" id="labelSilenceTrim">無音カット:</span>
+                    <div class="toggle-group" id="toggleSilenceTrim">
+                        <button class="toggle-btn" data-silence-trim="true">On</button>
+                        <button class="toggle-btn active" data-silence-trim="false">Off</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -511,6 +534,12 @@
         <div class="split-json-row hidden" id="splitJsonRow">
             <span class="option-label">分割定義JSON:</span>
             <textarea id="splitJsonInput" class="split-json-textarea" placeholder='[{"filename": "YYYY-MM-DD_タイトル.md", "start_page": 1, "end_page": 3}, ...]'></textarea>
+        </div>
+
+        <!-- コンテキスト入力 -->
+        <div class="split-json-row hidden" id="contextRow">
+            <span class="option-label">コンテキスト:</span>
+            <textarea id="contextInput" class="split-json-textarea" placeholder="登場人物、役職、会社名、事件名、呼称、専門用語などを入力"></textarea>
         </div>
 
         <!-- PDFページ抽出設定 -->
@@ -543,13 +572,6 @@
             <div class="pdf-pages-run-row">
                 <button class="context-browse-btn" id="pdfPagesRunBtn">実行</button>
             </div>
-        </div>
-
-        <!-- houhi コンテキストファイル -->
-        <div class="context-row hidden" id="contextRow">
-            <span class="context-label">コンテキスト:</span>
-            <input type="text" id="contextFileInput" class="context-input" placeholder="法匪 の sample.md のパス（省略可）">
-            <button class="context-browse-btn" id="contextBrowseBtn">参照</button>
         </div>
 
         <!-- ドロップゾーン -->

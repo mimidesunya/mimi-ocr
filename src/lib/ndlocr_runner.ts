@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { loadConfig } = require('./gemini_client');
+const { getToolConfig } = require('./gemini_client');
 
 /**
  * Executes ndlocr-lite on a given image file or directory.
@@ -11,13 +11,13 @@ const { loadConfig } = require('./gemini_client');
  */
 function runNdlocr(sourcePath, destDir, isDir = false) {
     return new Promise((resolve, reject) => {
-        const config = loadConfig();
-        if (!config || !config.ndlocrLite) {
-            return reject(new Error('config.json に ndlocrLite の設定がありません。'));
+        const ndlocrLite = getToolConfig('ndlocrLite');
+        if (!ndlocrLite) {
+            return reject(new Error('config.json に tools.ndlocrLite の設定がありません。'));
         }
 
-        const pythonPath = config.ndlocrLite.pythonPath || 'python';
-        const repoPath = config.ndlocrLite.repoPath;
+        const pythonPath = ndlocrLite.pythonPath || 'python';
+        const repoPath = ndlocrLite.repoPath;
 
         if (!repoPath || !fs.existsSync(repoPath)) {
             return reject(new Error(`ndlocr-lite のリポジトリが見つかりません。設定を確認してください: ${repoPath}`));

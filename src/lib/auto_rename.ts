@@ -551,9 +551,9 @@ function applyRenamePairs(pairs) {
     }
 }
 
-async function maybeAutoRenameDocument(sourcePath, ocrOutputPath = null, aiProvider = 'gemini', namingMode = 'general') {
+async function maybeAutoRenameDocument(sourcePath, ocrOutputPath = null, aiProvider = 'gemini', namingMode = 'general', options: any = {}) {
     const absSourcePath = path.resolve(sourcePath);
-    if (isAutoRenameFormatted(absSourcePath, namingMode)) {
+    if (options.skipFormattedRename === true && isAutoRenameFormatted(absSourcePath, namingMode)) {
         console.log(`[自動改名] 既に形式通りのため変更しません: ${path.basename(absSourcePath)}`);
         return absSourcePath;
     }

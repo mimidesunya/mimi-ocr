@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -20,7 +20,8 @@ function createWindow() {
             symbolColor: '#74b1be'
         },
         transparent: true,
-        backgroundColor: '#00000000'
+        backgroundColor: '#00000000',
+        title: 'MIMI OCR'
     });
 
     win.loadFile(path.join(__dirname, 'index.html'));
@@ -71,24 +72,13 @@ app.on('window-all-closed', () => {
 
 // スクリプト定義
 const SCRIPTS = {
-    'ocr_general': { path: 'src/ocr.js', name: 'OCR（一般）' },
-    'ocr_houhi':   { path: 'src/ocr.js', name: 'OCR（法匪）' },
+    'ocr':         { path: 'src/ocr.js', name: 'OCR' },
+    'transcribe_audio': { path: 'src/transcribe_audio.js', name: '音声認識' },
     'merge':       { path: 'src/merge_pages.js', name: 'ページ結合' },
     'split':       { path: 'src/split_pages.js', name: '文書分割' },
     'deblank':     { path: 'src/remove_blank_pages.js', name: '白紙除去' },
     'pdf_pages':   { path: 'src/pdf_pages.js', name: 'PDFページ抽出・結合' }
 };
-
-// ファイル選択ダイアログ（コンテキストファイル用）
-ipcMain.handle('open-file-dialog', async () => {
-    const result = await dialog.showOpenDialog({
-        properties: ['openFile'],
-        filters: [{ name: 'Markdown', extensions: ['md'] }],
-        title: 'houhi コンテキストファイルを選択'
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-});
 
 ipcMain.handle('execute-script', async (event, {
     scriptKey,
@@ -98,8 +88,12 @@ ipcMain.handle('execute-script', async (event, {
     ocrMode,
     preferPdfText,
     autoRename,
+    skipFormattedRename,
     batchSize,
-    contextFile,
+    ocrTarget,
+    audioOptions,
+    silenceTrim,
+    contextText,
     splitJson,
     pdfPageOptions
 }) => {
@@ -114,6 +108,7 @@ ipcMain.handle('execute-script', async (event, {
     const isSplit = scriptKey === 'split';
     const isDeblank = scriptKey === 'deblank';
     const isPdfPages = scriptKey === 'pdf_pages';
+    const isAudio = scriptKey === 'transcribe_audio';
     const selectedOcrMode = ocrMode || 'ai';
     const useNdlocr = selectedOcrMode === 'ndlocr_ai' || selectedOcrMode === 'ndlocr_only';
     const ndlocrOnly = selectedOcrMode === 'ndlocr_only';
@@ -124,6 +119,14 @@ ipcMain.handle('execute-script', async (event, {
         const os = require('os');
         splitJsonTempFile = path.join(os.tmpdir(), `mimi-ocr-split-${Date.now()}.json`);
         require('fs').writeFileSync(splitJsonTempFile, splitJson, 'utf-8');
+    }
+
+    let contextTempFile = null;
+    const context = String(contextText || '').trim();
+    if ((isAudio || (!isMerge && !isDeblank && !isSplit && !isPdfPages)) && context) {
+        const os = require('os');
+        contextTempFile = path.join(os.tmpdir(), `mimi-ocr-context-${Date.now()}.txt`);
+        require('fs').writeFileSync(contextTempFile, context, 'utf-8');
     }
 
     // 引数を構築
@@ -143,15 +146,28 @@ ipcMain.handle('execute-script', async (event, {
             scriptArgs.push('--two-up');
             scriptArgs.push('--direction', pdfPageOptions?.direction === 'rtl' ? 'rtl' : 'ltr');
         }
+    } else if (isAudio) {
+        const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
+        const provider = audioOptions?.provider === 'gemini' ? 'gemini' : 'openai';
+        const defaultModel = provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-4o-transcribe-diarize';
+        scriptArgs.push(`--target=${target}`);
+        scriptArgs.push(`--provider=${provider}`);
+        scriptArgs.push(`--model=${audioOptions?.model || defaultModel}`);
+        scriptArgs.push(`--mode=${processMode === 'batch' ? 'batch' : 'sync'}`);
+        const bs = parseInt(batchSize, 10);
+        if (!isNaN(bs) && bs > 0) {
+            scriptArgs.push(`--batch_size=${String(bs)}`);
+        }
+        scriptArgs.push(autoRename === true ? '--auto_rename' : '--no_auto_rename');
+        scriptArgs.push(skipFormattedRename === true ? '--skip_formatted_rename' : '--no_skip_formatted_rename');
+        scriptArgs.push(silenceTrim === true ? '--trim_silence' : '--no_trim_silence');
+        if (contextTempFile) {
+            scriptArgs.push(`--context-file=${contextTempFile}`);
+        }
     } else if (!isMerge && !isDeblank) {
         // ターゲット（houhi / general）
-        const target = scriptKey === 'ocr_houhi' ? 'houhi' : 'general';
+        const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         scriptArgs.push('--target', target);
-
-        // houhi モードのコンテキストファイル
-        if (target === 'houhi' && contextFile) {
-            scriptArgs.push('--context-file', contextFile);
-        }
 
         // OCRエンジン設定
         if (ndlocrOnly) {
@@ -167,6 +183,11 @@ ipcMain.handle('execute-script', async (event, {
 
         if (autoRename === true) {
             scriptArgs.push('--auto_rename');
+        }
+        scriptArgs.push(skipFormattedRename === true ? '--skip_formatted_rename' : '--no_skip_formatted_rename');
+
+        if (contextTempFile) {
+            scriptArgs.push('--context-file-text', contextTempFile);
         }
 
         // AI プロバイダー・処理モード
@@ -224,12 +245,23 @@ ipcMain.handle('execute-script', async (event, {
             ? `2面割付 (${pdfPageOptions?.direction === 'rtl' ? '右から左' : '左から右'})`
             : '通常抽出';
         consoleWin.webContents.send('console-info', `ページ指定: ${pdfPageOptions?.pages || '(未指定)'} / 種別: ${pageTypeLabel} / ${twoUpLabel}`);
+    } else if (isAudio) {
+        const target = ocrTarget === 'houhi' ? '法匪' : '一般';
+        const provider = audioOptions?.provider === 'gemini' ? 'Gemini' : 'OpenAI';
+        const modeLabel = processMode === 'batch' ? `バッチ (サイズ ${batchSize || 4})` : '同期';
+        const renameLabel = autoRename === true ? 'On' : 'Off';
+        const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
+        const trimLabel = silenceTrim === true ? 'On' : 'Off';
+        const contextLabel = context ? 'あり' : 'なし';
+        consoleWin.webContents.send('console-info', `音声認識: ${target} / ${provider} / モデル: ${audioOptions?.model || '(既定)'} / モード: ${modeLabel} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel} / 無音カット: ${trimLabel} / コンテキスト: ${contextLabel}`);
     } else if (!isMerge) {
-        const target = scriptKey === 'ocr_houhi' ? 'houhi' : 'general';
+        const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         const ocrLabel = ndlocrOnly ? 'ndlocr-only' : (useNdlocr ? 'ndlocr+AI' : 'AIのみ');
         const renameLabel = autoRename === false ? 'Off' : 'On';
+        const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
         consoleWin.webContents.send('console-info',
-            `ターゲット: ${target} / AI: ${aiProvider || 'gemini'} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / OCR: ${ocrLabel} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'} / 自動改名: ${renameLabel}`
+            `ターゲット: ${target} / AI: ${aiProvider || 'gemini'} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / OCR: ${ocrLabel} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel}`
+            + ` / コンテキスト: ${context ? 'あり' : 'なし'}`
         );
     }
 
@@ -298,6 +330,9 @@ ipcMain.handle('execute-script', async (event, {
             // 分割ツールの一時ファイルを削除
             if (splitJsonTempFile) {
                 try { require('fs').unlinkSync(splitJsonTempFile); } catch (_) {}
+            }
+            if (contextTempFile) {
+                try { require('fs').unlinkSync(contextTempFile); } catch (_) {}
             }
 
             if (code === 0) {

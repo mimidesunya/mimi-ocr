@@ -1,12 +1,8 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { loadConfig } = require('./gemini_client');
+const { getProviderConfig } = require('./gemini_client');
 
 function getClaudeConfig() {
-    const config = loadConfig();
-    if (config && config.claude) {
-        return config.claude;
-    }
-    return null;
+    return getProviderConfig('claude');
 }
 
 function formatTime(ms) {

@@ -1,29 +1,76 @@
 {
-  "gemini": {
-    "apiKey": "YOUR_GEMINI_API_KEY",
-    "chatModel": "gemini-2.5-flash-preview",
-    "maxRetries": 3
+  "app": {
+    "name": "MIMI OCR"
   },
-  "claude": {
-    "apiKey": "YOUR_CLAUDE_API_KEY",
-    "baseUrl": "https://api.anthropic.com/v1/messages",
-    "chatModel": "claude-opus-4-6",
-    "timeoutMs": 300000,
-    "maxRetries": 3
+  "providers": {
+    "gemini": {
+      "apiKey": "YOUR_GEMINI_API_KEY",
+      "chatModel": "gemini-2.5-flash-preview",
+      "transcriptionModel": "gemini-3.5-flash",
+      "maxRetries": 3
+    },
+    "claude": {
+      "apiKey": "YOUR_CLAUDE_API_KEY",
+      "baseUrl": "https://api.anthropic.com/v1/messages",
+      "chatModel": "claude-opus-4-6",
+      "timeoutMs": 300000,
+      "maxRetries": 3
+    },
+    "openai": {
+      "apiKey": "YOUR_OPENAI_API_KEY",
+      "baseUrl": "https://api.openai.com/v1/chat/completions",
+      "chatModel": "gpt-4o",
+      "transcriptionModel": "gpt-4o-transcribe-diarize",
+      "timeoutMs": 300000,
+      "maxRetries": 3
+    }
   },
-  "openai": {
-    "apiKey": "YOUR_OPENAI_API_KEY",
-    "baseUrl": "https://api.openai.com/v1/chat/completions",
-    "chatModel": "gpt-4o",
-    "timeoutMs": 300000,
-    "maxRetries": 3
+  "ocr": {
+    "provider": "gemini",
+    "target": "general",
+    "mode": "sync",
+    "batchSize": 4,
+    "preferPdfText": false,
+    "autoRename": false,
+    "skipFormattedRename": false,
+    "houhiTemplatePath": "",
+    "contextText": "",
+    "contextFilePath": ""
   },
-  "ndlocrLite": {
-    "pythonPath": "python",
-    "repoPath": "PATH_TO_NDLOCR_LITE_REPO",
-    "parallelJobs": "auto",
-    "pageChunkSize": 8,
-    "workerStartDelayMs": 1500,
-    "imageDpi": 300
+  "transcription": {
+    "provider": "gemini",
+    "language": "ja",
+    "target": "general",
+    "mode": "sync",
+    "batchSize": 4,
+    "autoRename": false,
+    "skipFormattedRename": false,
+    "contextText": "",
+    "contextFilePath": "",
+    "silenceTrim": {
+      "enabled": false,
+      "thresholdDb": -35,
+      "minSilenceSec": 1,
+      "paddingSec": 0.2,
+      "outputFormat": "m4a",
+      "outputBitrate": "96k"
+    }
+  },
+  "tools": {
+    "ffmpeg": {
+      "ffmpegPath": "F:\\usr\\ffmpeg-7.1.1-full_build\\bin\\ffmpeg.exe",
+      "ffprobePath": "F:\\usr\\ffmpeg-7.1.1-full_build\\bin\\ffprobe.exe"
+    },
+    "ndlocrLite": {
+      "pythonPath": "python",
+      "repoPath": "PATH_TO_NDLOCR_LITE_REPO",
+      "parallelJobs": "auto",
+      "pageChunkSize": 8,
+      "workerStartDelayMs": 1500,
+      "imageDpi": 300
+    }
+  },
+  "paths": {
+    "houhiRoot": ""
   }
 }

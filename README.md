@@ -1,4 +1,4 @@
-# mimi-ocr
+# MIMI OCR
 
 日本語文書を Markdown に変換する OCR ツールです。Electron GUI と CLI の両方に対応し、AI プロバイダーとして Gemini / Claude / OpenAI を利用できます。
 
@@ -7,6 +7,7 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 ## 主な機能
 
 - PDF / Word / ODT / PowerPoint の Markdown 化
+- 音声ファイルの発言者分離つき Markdown / 反訳書化
 - Gemini / Claude / OpenAI の切り替え
 - PDF での `ndlocr-lite` 併用
 - OCR 後のページ結合 (`*_paged.md` -> `*_merged.md`)
@@ -47,7 +48,7 @@ Copy-Item config.template.json config.json
 npm run gui
 ```
 
-ファイルをドラッグアンドドロップして OCR を実行できます。
+ファイルをドラッグアンドドロップして OCR や音声認識を実行できます。
 
 ## CLI の使い方
 
@@ -70,6 +71,16 @@ npm run ocr -- .\sample.pdf --ndlocr
 
 ```powershell
 npm run merge -- <Markdownファイルまたはディレクトリ>
+```
+
+### 音声認識
+
+```powershell
+npm run transcribe -- .\meeting.m4a --target=houhi --provider=openai --model=gpt-4o-transcribe-diarize
+npm run transcribe -- .\meeting.wav --target=general --provider=gemini --model=gemini-3.5-flash
+npm run transcribe -- .\a.m4a .\b.m4a --mode=batch --batch_size=2 --auto_rename
+npm run transcribe -- .\meeting.m4a --context-text "登場人物: 田中、佐藤。専門用語: 反訳書。"
+npm run transcribe -- .\meeting.m4a --trim_silence
 ```
 
 ### 文書分割
@@ -121,6 +132,7 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 | --- | --- |
 | `--target houhi\|general` | 出力スタイルを切り替える |
 | `--context-file <path>` | houhi 用のサンプル Markdown を指定する |
+| `--context-text <text>` | OCR用の補助コンテキストを指定する |
 | `--ai gemini\|claude\|openai` | AI プロバイダーを選ぶ |
 | `--mode batch\|sync` | バッチ処理か同期処理かを選ぶ |
 | `--batch_size <n>` | PDF の処理ページ数を指定する |
@@ -130,6 +142,12 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 | `--ndlocr_only` | `ndlocr-lite` のみで処理する |
 | `--prefer_pdf_text` | 埋め込みテキストを優先する |
 | `--auto_rename` | AI による自動ファイル名変更を有効にする |
+
+音声認識でも `--mode=batch` / `--batch_size` / `--auto_rename` を使えます。音声のバッチは複数ファイルの並列処理、自動改名は文字起こし内容から音声ファイル本体と出力Markdown名を同じ stem で作る機能です。
+`--context-text` または `--context-file` で、登場人物や固有名詞などの事前コンテキストも渡せます。
+既存の音声認識 Markdown がある場合はAPI処理をスキップし、`--auto_rename` 指定時は既存 Markdown を使って音声ファイル本体と Markdown の改名だけを行います。
+この既存出力スキップと改名のみ実行は、OCRの既存 `_paged.md` スキップと同じ考え方です。
+`--trim_silence` を付けると、クライアント側で ffmpeg により無音区間をカットしてからAIへ渡します。出力時刻は元音声上の時刻へ補正され、Markdown末尾の不可視コメントに無音カット設定と削除区間の要約を残します。
 
 ## 出力ファイル
 

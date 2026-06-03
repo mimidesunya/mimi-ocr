@@ -22,11 +22,11 @@ npm install
 Copy-Item config.template.json config.json
 ```
 
-`config.json` を開き、使いたいプロバイダーのAPIキーやモデル名を設定してください。
+`config.json` を開き、`providers` に使いたいプロバイダーのAPIキーやモデル名を設定してください。OCRと音声認識の既定値は、それぞれ `ocr` / `transcription` にまとめます。
 
 ### 3. 必要なら `ndlocr-lite` を設定する
 
-`config.json` の `ndlocrLite.repoPath` に、`ndlocr-lite` リポジトリの絶対パスを設定します。
+`config.json` の `tools.ndlocrLite.repoPath` に、`ndlocr-lite` リポジトリの絶対パスを設定します。
 
 ### 4. ビルドする
 

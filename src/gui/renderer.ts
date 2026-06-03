@@ -6,12 +6,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const consoleOutput   = document.getElementById('consoleOutput') as HTMLElement;
     const progressBar     = document.getElementById('progressBar') as HTMLElement;
     const toolCards       = document.querySelectorAll<HTMLElement>('.tool-card');
-    const contextRow      = document.getElementById('contextRow') as HTMLElement;
-    const contextFileInput = document.getElementById('contextFileInput') as HTMLInputElement;
-    const contextBrowseBtn = document.getElementById('contextBrowseBtn') as HTMLButtonElement;
     const batchSizeInput  = document.getElementById('batchSizeInput') as HTMLInputElement;
     const splitJsonRow    = document.getElementById('splitJsonRow') as HTMLElement;
     const splitJsonInput  = document.getElementById('splitJsonInput') as HTMLTextAreaElement;
+    const contextRow = document.getElementById('contextRow') as HTMLElement;
+    const contextInput = document.getElementById('contextInput') as HTMLTextAreaElement;
     const pdfPagesRow     = document.getElementById('pdfPagesRow') as HTMLElement;
     const pdfPagesFileList = document.getElementById('pdfPagesFileList') as HTMLElement;
     const pdfPagesRunBtn  = document.getElementById('pdfPagesRunBtn') as HTMLButtonElement;
@@ -21,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const modeBtns     = document.querySelectorAll<HTMLElement>('[data-mode]');
     const pdfTextBtns  = document.querySelectorAll<HTMLElement>('[data-pdftext]');
     const autoRenameBtns = document.querySelectorAll<HTMLElement>('[data-auto-rename]');
+    const formattedRenameBtns = document.querySelectorAll<HTMLElement>('[data-skip-formatted-rename]');
+    const silenceTrimBtns = document.querySelectorAll<HTMLElement>('[data-silence-trim]');
+    const ocrTargetBtns = document.querySelectorAll<HTMLElement>('[data-ocr-target]');
+    const audioModelBtns = document.querySelectorAll<HTMLElement>('[data-audio-model]');
     const pdfPageTypeBtns = document.querySelectorAll<HTMLElement>('[data-pdf-page-type]');
     const pdfTwoUpBtns = document.querySelectorAll<HTMLElement>('[data-pdf-two-up]');
     const pdfDirectionBtns = document.querySelectorAll<HTMLElement>('[data-pdf-direction]');
@@ -28,37 +31,52 @@ document.addEventListener('DOMContentLoaded', () => {
     const toggleAi     = document.getElementById('toggleAi') as HTMLElement;
     const toggleMode   = document.getElementById('toggleMode') as HTMLElement;
     const toggleOcr    = document.getElementById('toggleOcr') as HTMLElement;
+    const toggleOcrTarget = document.getElementById('toggleOcrTarget') as HTMLElement;
+    const toggleAudioModel = document.getElementById('toggleAudioModel') as HTMLElement;
     const togglePdfText = document.getElementById('togglePdfText') as HTMLElement;
     const toggleAutoRename = document.getElementById('toggleAutoRename') as HTMLElement;
+    const toggleFormattedRename = document.getElementById('toggleFormattedRename') as HTMLElement;
+    const toggleSilenceTrim = document.getElementById('toggleSilenceTrim') as HTMLElement;
     const labelAi      = document.getElementById('labelAi') as HTMLElement;
     const labelMode    = document.getElementById('labelMode') as HTMLElement;
     const labelOcr     = document.getElementById('labelOcr') as HTMLElement;
+    const labelOcrTarget = document.getElementById('labelOcrTarget') as HTMLElement;
+    const labelAudioModel = document.getElementById('labelAudioModel') as HTMLElement;
     const labelPdfText = document.getElementById('labelPdfText') as HTMLElement;
     const labelAutoRename = document.getElementById('labelAutoRename') as HTMLElement;
+    const labelFormattedRename = document.getElementById('labelFormattedRename') as HTMLElement;
+    const labelSilenceTrim = document.getElementById('labelSilenceTrim') as HTMLElement;
     const labelBatch   = document.getElementById('labelBatch') as HTMLElement;
 
     // ---- 状態 ----
-    type ScriptKey = 'ocr_general' | 'ocr_houhi' | 'merge' | 'split' | 'deblank' | 'pdf_pages';
-    let currentScript: ScriptKey = 'ocr_general';
+    type ScriptKey = 'ocr' | 'transcribe_audio' | 'merge' | 'split' | 'deblank' | 'pdf_pages';
+    type OcrTarget = 'general' | 'houhi';
+    let currentScript: ScriptKey = 'ocr';
+    let currentOcrTarget: OcrTarget = 'general';
+    let currentAudioModel = 'gemini:gemini-3.5-flash';
     let currentAiProvider = 'gemini';
     let currentProcessMode = 'sync';
     let currentOcrMode = 'ai';       // ai | ndlocr_ai | ndlocr_only
     let currentPreferPdfText = false;
     let currentAutoRename = false;
+    let currentSkipFormattedRename = false;
+    let currentSilenceTrim = false;
     let currentPdfPageType = 'pdf';  // pdf | printed
     let currentPdfTwoUp = false;
     let currentPdfDirection = 'ltr'; // ltr | rtl
     let selectedPdfPageFiles: string[] = [];
     let pdfPageRanges: Record<string, string> = {};
     let draggedPdfPageIndex: number | null = null;
+    const GUI_STATE_KEY = 'mimi-ocr-gui-state-v1';
 
-    const isOcrTool = (key: string) => key === 'ocr_general' || key === 'ocr_houhi';
+    const isOcrTool = (key: string) => key === 'ocr';
+    const isAudioTool = (key: string) => key === 'transcribe_audio';
     const isPdfPagesTool = (key: string) => key === 'pdf_pages';
 
     // ツール説明（ホバー表示）
     const toolDescriptions: Record<string, string> = {
-        'ocr_general': '一般文書をOCR処理（PDF / Word / ODT / PPTX / 画像）',
-        'ocr_houhi':   '裁判文書を法匪書式でOCR処理',
+        'ocr':         'PDF / Word / ODT / PPTX / 画像をOCR処理',
+        'transcribe_audio': '音声を発言者分離つきでMarkdownへ変換',
         'merge':       'OCR済み _paged.md のページマーカーを結合',
         'split':       '_paged.md をJSONの分割定義で文書ごとに分割',
         'deblank':     'OCR結果をもとに白紙ページを除去したPDFとMDを生成',
@@ -72,6 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentScript = script;
         log(`ツール変更: ${card.querySelector<HTMLElement>('.tool-name')!.textContent}`);
         applyConstraints();
+        saveGuiState();
     }
 
     async function handleFilesForCurrentTool(files: string[]) {
@@ -122,6 +141,31 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // ---- OCR出力スタイル選択 ----
+    ocrTargetBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
+            ocrTargetBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentOcrTarget = (btn.dataset.ocrTarget as OcrTarget) || 'general';
+            log(`OCR出力変更: ${currentOcrTarget === 'houhi' ? '法匪' : '一般'}`);
+            applyConstraints();
+            saveGuiState();
+        });
+    });
+
+    // ---- 音声認識モデル選択 ----
+    audioModelBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
+            audioModelBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentAudioModel = btn.dataset.audioModel || 'gemini:gemini-3.5-flash';
+            log(`音声AI変更: ${btn.textContent || currentAudioModel}`);
+            saveGuiState();
+        });
+    });
+
     // ---- OCRエンジン選択 ----
     ocrBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -132,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const labels = { ai: 'AIのみ', ndlocr_ai: 'ndlocr+AI', ndlocr_only: 'ndlocr-only' };
             log(`OCRエンジン変更: ${labels[currentOcrMode] || currentOcrMode}`);
             applyConstraints();
+            saveGuiState();
         });
     });
 
@@ -144,6 +189,7 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAiProvider = btn.dataset.ai || 'gemini';
             log(`AIプロバイダー変更: ${currentAiProvider}`);
             applyModeConstraint();
+            saveGuiState();
         });
     });
 
@@ -155,6 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('active');
             currentProcessMode = btn.dataset.mode || 'sync';
             log(`処理モード変更: ${currentProcessMode === 'sync' ? '同期' : 'バッチ'}`);
+            saveGuiState();
         });
     });
 
@@ -166,6 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('active');
             currentPreferPdfText = btn.dataset.pdftext === 'true';
             log(`PDFテキスト優先: ${currentPreferPdfText ? 'On' : 'Off'}`);
+            saveGuiState();
         });
     });
 
@@ -178,6 +226,31 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAutoRename = btn.dataset.autoRename !== 'false';
             log(`自動改名: ${currentAutoRename ? 'On' : 'Off'}`);
             applyConstraints();
+            saveGuiState();
+        });
+    });
+
+    // ---- 形式済みファイルの自動改名 ----
+    formattedRenameBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
+            formattedRenameBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentSkipFormattedRename = btn.dataset.skipFormattedRename === 'true';
+            log(`形式済みファイル: ${currentSkipFormattedRename ? 'スキップ' : '再判定'}`);
+            saveGuiState();
+        });
+    });
+
+    // ---- 無音カット選択 ----
+    silenceTrimBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
+            silenceTrimBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentSilenceTrim = btn.dataset.silenceTrim === 'true';
+            log(`無音カット: ${currentSilenceTrim ? 'On' : 'Off'}`);
+            saveGuiState();
         });
     });
 
@@ -188,6 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('active');
             currentPdfPageType = btn.dataset.pdfPageType || 'pdf';
             log(`ページ種別: ${currentPdfPageType === 'printed' ? '印刷ページ' : 'PDFページ'}`);
+            saveGuiState();
         });
     });
 
@@ -198,6 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
             currentPdfTwoUp = btn.dataset.pdfTwoUp === 'true';
             log(`2面割付: ${currentPdfTwoUp ? 'On' : 'Off'}`);
             applyConstraints();
+            saveGuiState();
         });
     });
 
@@ -208,6 +283,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.classList.add('active');
             currentPdfDirection = btn.dataset.pdfDirection || 'ltr';
             log(`2面方向: ${currentPdfDirection === 'rtl' ? '右から左' : '左から右'}`);
+            saveGuiState();
         });
     });
 
@@ -217,15 +293,6 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         await executeWith(selectedPdfPageFiles);
-    });
-
-    // ---- コンテキストファイル参照 ----
-    contextBrowseBtn.addEventListener('click', async () => {
-        const filePath = await (window as any).electronAPI.openFileDialog();
-        if (filePath) {
-            contextFileInput.value = filePath;
-            log(`コンテキストファイル設定: ${filePath}`);
-        }
     });
 
     // ---- UI制約適用 ----
@@ -255,31 +322,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function applyConstraints() {
         const ocr = isOcrTool(currentScript);
+        const audio = isAudioTool(currentScript);
         const pdfPages = isPdfPagesTool(currentScript);
         const ndlocrOnly = currentOcrMode === 'ndlocr_only';
         const aiEnabled = ocr && (!ndlocrOnly || currentAutoRename);
-        const modeEnabled = ocr && !ndlocrOnly;
+        const modeEnabled = (ocr && !ndlocrOnly) || audio;
+        const batchEnabled = ocr || audio;
+        const autoRenameEnabled = ocr || audio;
 
         // OCRエンジントグル
         setGroupDisabled(toggleOcr, labelOcr, ocrBtns, !ocr);
+        setGroupDisabled(toggleOcrTarget, labelOcrTarget, ocrTargetBtns, !(ocr || audio));
+        setGroupDisabled(toggleAudioModel, labelAudioModel, audioModelBtns, !audio);
 
         // AI / モード / PDFテキスト / バッチサイズ
         setGroupDisabled(toggleAi, labelAi, aiBtns, !aiEnabled);
         setGroupDisabled(toggleMode, labelMode, modeBtns, !modeEnabled);
         setGroupDisabled(togglePdfText, labelPdfText, pdfTextBtns, !ocr);
-        setGroupDisabled(toggleAutoRename, labelAutoRename, autoRenameBtns, !ocr);
-        batchSizeInput.disabled = !ocr;
-        labelBatch.classList.toggle('disabled', !ocr);
+        setGroupDisabled(toggleAutoRename, labelAutoRename, autoRenameBtns, !autoRenameEnabled);
+        setGroupDisabled(toggleFormattedRename, labelFormattedRename, formattedRenameBtns, !autoRenameEnabled || !currentAutoRename);
+        setGroupDisabled(toggleSilenceTrim, labelSilenceTrim, silenceTrimBtns, !audio);
+        batchSizeInput.disabled = !batchEnabled;
+        labelBatch.classList.toggle('disabled', !batchEnabled);
 
-        if (modeEnabled) applyModeConstraint();
-
-        // houhi コンテキストファイル行
-        const showContext = currentScript === 'ocr_houhi';
-        contextRow.classList.toggle('hidden', !showContext);
+        if (ocr && modeEnabled) applyModeConstraint();
 
         // 分割JSON入力行
         const showSplitJson = currentScript === 'split';
         splitJsonRow.classList.toggle('hidden', !showSplitJson);
+        contextRow.classList.toggle('hidden', !(ocr || audio));
 
         const showPdfPages = pdfPages;
         pdfPagesRow.classList.toggle('hidden', !showPdfPages);
@@ -298,7 +369,79 @@ document.addEventListener('DOMContentLoaded', () => {
         btns.forEach(b => b.classList.toggle('disabled', disabled));
     }
 
+    function setActiveByData(btns: NodeListOf<HTMLElement>, dataKey: string, value: string) {
+        btns.forEach(btn => {
+            const active = btn.dataset[dataKey] === value;
+            btn.classList.toggle('active', active);
+        });
+    }
+
+    function saveGuiState() {
+        try {
+            localStorage.setItem(GUI_STATE_KEY, JSON.stringify({
+                currentScript,
+                currentOcrTarget,
+                currentAudioModel,
+                currentAiProvider,
+                currentProcessMode,
+                currentOcrMode,
+                currentPreferPdfText,
+                currentAutoRename,
+                currentSkipFormattedRename,
+                currentSilenceTrim,
+                currentPdfPageType,
+                currentPdfTwoUp,
+                currentPdfDirection,
+                batchSize: batchSizeInput.value,
+                contextText: contextInput.value,
+            }));
+        } catch (_err) {
+        }
+    }
+
+    function restoreGuiState() {
+        try {
+            const raw = localStorage.getItem(GUI_STATE_KEY);
+            if (!raw) return;
+            const state = JSON.parse(raw);
+            currentScript = (state.currentScript || currentScript) as ScriptKey;
+            currentOcrTarget = (state.currentOcrTarget || currentOcrTarget) as OcrTarget;
+            currentAudioModel = state.currentAudioModel || currentAudioModel;
+            currentAiProvider = state.currentAiProvider || currentAiProvider;
+            currentProcessMode = state.currentProcessMode || currentProcessMode;
+            currentOcrMode = state.currentOcrMode || currentOcrMode;
+            currentPreferPdfText = state.currentPreferPdfText === true;
+            currentAutoRename = state.currentAutoRename === true;
+            currentSkipFormattedRename = state.currentSkipFormattedRename === true;
+            currentSilenceTrim = state.currentSilenceTrim === true;
+            currentPdfPageType = state.currentPdfPageType || currentPdfPageType;
+            currentPdfTwoUp = state.currentPdfTwoUp === true;
+            currentPdfDirection = state.currentPdfDirection || currentPdfDirection;
+            batchSizeInput.value = String(state.batchSize || batchSizeInput.value || '4');
+            contextInput.value = String(state.contextText || '');
+
+            toolCards.forEach(card => card.classList.toggle('active', card.dataset.script === currentScript));
+            setActiveByData(ocrTargetBtns, 'ocrTarget', currentOcrTarget);
+            setActiveByData(audioModelBtns, 'audioModel', currentAudioModel);
+            setActiveByData(aiBtns, 'ai', currentAiProvider);
+            setActiveByData(modeBtns, 'mode', currentProcessMode);
+            setActiveByData(ocrBtns, 'ocrMode', currentOcrMode);
+            setActiveByData(pdfTextBtns, 'pdftext', String(currentPreferPdfText));
+            setActiveByData(autoRenameBtns, 'autoRename', String(currentAutoRename));
+            setActiveByData(formattedRenameBtns, 'skipFormattedRename', String(currentSkipFormattedRename));
+            setActiveByData(silenceTrimBtns, 'silenceTrim', String(currentSilenceTrim));
+            setActiveByData(pdfPageTypeBtns, 'pdfPageType', currentPdfPageType);
+            setActiveByData(pdfTwoUpBtns, 'pdfTwoUp', String(currentPdfTwoUp));
+            setActiveByData(pdfDirectionBtns, 'pdfDirection', currentPdfDirection);
+        } catch (_err) {
+        }
+    }
+
+    batchSizeInput.addEventListener('input', saveGuiState);
+    contextInput.addEventListener('input', saveGuiState);
+
     // 初期状態
+    restoreGuiState();
     applyConstraints();
 
     // ---- ドラッグ＆ドロップ ----
@@ -499,6 +642,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        const audioOptions = parseAudioModel(currentAudioModel);
+
         setLoading(true);
         try {
             const result = await (window as any).electronAPI.executeScript(
@@ -509,8 +654,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentOcrMode,
                 currentPreferPdfText,
                 currentAutoRename,
+                currentSkipFormattedRename,
                 parseInt(batchSizeInput.value, 10) || 4,
-                contextFileInput.value.trim() || null,
+                currentOcrTarget,
+                audioOptions,
+                currentSilenceTrim,
+                (currentScript === 'ocr' || currentScript === 'transcribe_audio') ? contextInput.value.trim() : null,
                 currentScript === 'split' ? splitJsonInput.value.trim() : null,
                 currentScript === 'pdf_pages' ? {
                     filePages: files.map(file => ({ path: file, pages: (pdfPageRanges[file] || '').trim() })),
@@ -524,11 +673,20 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 log(`処理失敗 (コード: ${result.code})`, 'error');
             }
+            saveGuiState();
         } catch (err: any) {
             log(`エラー: ${err.message}`, 'error');
         } finally {
             setLoading(false);
         }
+    }
+
+    function parseAudioModel(value: string) {
+        const [provider, model] = String(value || 'gemini:gemini-3.5-flash').split(':');
+        return {
+            provider: provider === 'gemini' ? 'gemini' : 'openai',
+            model: model || (provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-4o-transcribe-diarize'),
+        };
     }
 
     // ---- IPC ログ受信 ----

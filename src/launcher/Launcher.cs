@@ -27,7 +27,7 @@ class Program {
                     "初回起動前にプロジェクトフォルダで以下を実行してください:\n\n" +
                     "    npm install\n\n" +
                     "プロジェクトフォルダ:\n" + projectRoot,
-                    "mimi-ocr - セットアップが必要です",
+                    "MIMI OCR - セットアップが必要です",
                     MB_OK | MB_ICONWARNING
                 );
                 return;
@@ -50,7 +50,7 @@ class Program {
                 "起動に失敗しました。\n\n" +
                 "npm と node がインストールされているか確認してください。\n\n" +
                 "エラー詳細:\n" + ex.Message,
-                "mimi-ocr エラー",
+                "MIMI OCR エラー",
                 MB_OK | MB_ICONERROR
             );
         }

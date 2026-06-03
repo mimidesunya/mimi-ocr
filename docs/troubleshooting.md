@@ -31,45 +31,45 @@ Copy-Item config.template.json config.json
 
 原因:
 
-- `gemini.chatModel` が設定されていない
+- `providers.gemini.chatModel` が設定されていない
 - `GEMINI_CHAT_MODEL` も未設定
 
 対処:
 
-- `config.json` の `gemini.chatModel` を設定する
+- `config.json` の `providers.gemini.chatModel` を設定する
 - もしくは環境変数 `GEMINI_CHAT_MODEL` を設定する
 
 ## `OpenAI API Key not found in config.json`
 
 原因:
 
-- `openai.apiKey` がない
+- `providers.openai.apiKey` がない
 
 対処:
 
-- `config.json` の `openai.apiKey` を設定する
+- `config.json` の `providers.openai.apiKey` を設定する
 
 ## `Claude API Key not found in config.json`
 
 原因:
 
-- `claude.apiKey` がない
+- `providers.claude.apiKey` がない
 
 対処:
 
-- `config.json` の `claude.apiKey` を設定する
+- `config.json` の `providers.claude.apiKey` を設定する
 
 ## `ndlocr-lite のリポジトリが見つかりません`
 
 原因:
 
-- `ndlocrLite.repoPath` が未設定
+- `tools.ndlocrLite.repoPath` が未設定
 - 指定パスが存在しない
 - `src/ocr.py` が見つからない
 
 対処:
 
-- `config.json` の `ndlocrLite.repoPath` を絶対パスで設定する
+- `config.json` の `tools.ndlocrLite.repoPath` を絶対パスで設定する
 - `pythonPath` で起動できる Python を確認する
 
 ## 既存ファイルがあるためスキップされる
@@ -137,9 +137,9 @@ Copy-Item config.template.json config.json
 
 対処:
 
-- `config.json` の `ndlocrLite.parallelJobs` を `1` か `2` に下げる
-- `config.json` の `ndlocrLite.pageChunkSize` を `4` か `6` に下げる
-- `config.json` の `ndlocrLite.imageDpi` を `200` 前後に下げる
+- `config.json` の `tools.ndlocrLite.parallelJobs` を `1` か `2` に下げる
+- `config.json` の `tools.ndlocrLite.pageChunkSize` を `4` か `6` に下げる
+- `config.json` の `tools.ndlocrLite.imageDpi` を `200` 前後に下げる
 - まずは `--start_page` / `--end_page` で区間を分けて実行する
 
 ## Claude でバッチを選べない

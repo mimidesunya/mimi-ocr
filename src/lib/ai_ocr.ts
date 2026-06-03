@@ -11,7 +11,7 @@ const os = require('os');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { extractPdfPagesToImages } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
-const { loadConfig, getGeminiChatModel } = require('./gemini_client');
+const { getGeminiChatModel, getToolConfig, getProviderConfig } = require('./gemini_client');
 
 function formatTime(ms) {
     const seconds = Math.floor(ms / 1000);
@@ -154,6 +154,32 @@ function createOcrRequest(pdfBytes, numPages, contextInstruction = "") {
         ],
         numPages: numPages
     }, contextInstruction, false);
+}
+
+async function createImageOcrRequestFromPdfPages(pdfPath, pageNumbers, contextInstruction = "") {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi_ocr_pdf_images_'));
+    try {
+        const imagePaths = await extractPdfPagesToImages(pdfPath, tmpDir, getNdlocrImageDpi(), pageNumbers);
+        if (imagePaths.length === 0) {
+            throw new Error(`PDFページ画像化に失敗しました: ${pageNumbers.join(',')}`);
+        }
+        return createDocRequest({
+            dataParts: imagePaths.map(imagePath => ({
+                inlineData: {
+                    mimeType: 'image/png',
+                    data: fs.readFileSync(imagePath).toString('base64')
+                }
+            })),
+            numPages: imagePaths.length
+        }, contextInstruction, false);
+    } finally {
+        if (fs.existsSync(tmpDir)) {
+            try {
+                fs.rmSync(tmpDir, { recursive: true, force: true });
+            } catch (_e) {
+            }
+        }
+    }
 }
 
 async function runBatches(requests, metadata, batchProcessor, progressState, persistenceFile, processMode = 'batch') {
@@ -321,6 +347,31 @@ function toAbsoluteBatchPageMap(rawText, metaPages) {
     return result;
 }
 
+function stripOcrPageMarkers(block) {
+    return String(block || '')
+        .replace(/### -- Begin Page \d+.*?--/g, '')
+        .replace(/### -- End.*?--/g, '')
+        .replace(/<!-- mimi-ocr-settings[\s\S]*?-->/g, '')
+        .replace(/\[ERROR:[\s\S]*$/g, '')
+        .trim();
+}
+
+function hasUsefulOcrPageText(block) {
+    const text = stripOcrPageMarkers(block)
+        .replace(/[\s\u3000\r\n\t\-_*#|:：。．、，・]+/g, '');
+    return text.length > 0;
+}
+
+function findEmptyOcrPages(pageMap, pages) {
+    const emptyPages = [];
+    for (const pageNum of pages || []) {
+        if (!hasUsefulOcrPageText(pageMap.get(pageNum))) {
+            emptyPages.push(pageNum);
+        }
+    }
+    return emptyPages;
+}
+
 function normalizeErrorDetail(detail) {
     const text = String(detail || '').replace(/\r\n/g, '\n').trim();
     if (!text) return '詳細情報なし';
@@ -452,10 +503,9 @@ function loadBuildInfo() {
 }
 
 function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}) {
-    const config = loadConfig() || {};
     const aiProvider = runtimeOptions.aiProvider || 'gemini';
-    const providerConfig = config?.[aiProvider] || {};
-    const ndlocrConfig = config?.ndlocrLite || {};
+    const providerConfig = getProviderConfig(aiProvider) || {};
+    const ndlocrConfig = getToolConfig('ndlocrLite') || {};
     const metadata = compactMetadataObject({
         tool: 'mimi-ocr',
         build: loadBuildInfo(),
@@ -549,8 +599,8 @@ function normalizeNdlocrText(rawText) {
 }
 
 function getNdlocrParallelJobs() {
-    const config = loadConfig();
-    const raw = config?.ndlocrLite?.parallelJobs;
+    const ndlocrLite = getToolConfig('ndlocrLite');
+    const raw = ndlocrLite?.parallelJobs;
 
     const cpuCount = (() => {
         try {
@@ -586,18 +636,18 @@ function parseNonNegativeIntSetting(raw, defaultValue, maxValue) {
 }
 
 function getNdlocrPageChunkSize() {
-    const config = loadConfig();
-    return parsePositiveIntSetting(config?.ndlocrLite?.pageChunkSize, 8, 200);
+    const ndlocrLite = getToolConfig('ndlocrLite');
+    return parsePositiveIntSetting(ndlocrLite?.pageChunkSize, 8, 200);
 }
 
 function getNdlocrWorkerStartDelayMs() {
-    const config = loadConfig();
-    return parseNonNegativeIntSetting(config?.ndlocrLite?.workerStartDelayMs, 1500, 60000);
+    const ndlocrLite = getToolConfig('ndlocrLite');
+    return parseNonNegativeIntSetting(ndlocrLite?.workerStartDelayMs, 1500, 60000);
 }
 
 function getNdlocrImageDpi() {
-    const config = loadConfig();
-    return parsePositiveIntSetting(config?.ndlocrLite?.imageDpi, 300, 600);
+    const ndlocrLite = getToolConfig('ndlocrLite');
+    return parsePositiveIntSetting(ndlocrLite?.imageDpi, 300, 600);
 }
 
 function sleep(ms) {
@@ -994,7 +1044,12 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
             const batchPdfBytes = await newDoc.save();
 
-            requests.push(createOcrRequest(Buffer.from(batchPdfBytes), batch.length, contextInstruction));
+            if (aiProvider === 'gemini' && processMode === 'sync') {
+                console.log(`[同期] Gemini PDF直読み回避: ページ ${batch.join(',')} を画像化してOCRします`);
+                requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction));
+            } else {
+                requests.push(createOcrRequest(Buffer.from(batchPdfBytes), batch.length, contextInstruction));
+            }
             
             batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch });
         }
@@ -1109,6 +1164,17 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                         const detail = `バッチ検証失敗: expected markers=${meta.numPages}, begin=${normalized.beginCount}, end=${normalized.endCount}, validRelative=${normalized.validRelativeCount}`;
                         setPageErrorForPages(meta.pages, detail);
                         console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) の検証に失敗しました。期待されるマーカー数: ${meta.numPages}, 実際: 開始:${normalized.beginCount}, 終了:${normalized.endCount}。`);
+                    }
+
+                    if (success) {
+                        const emptyPages = findEmptyOcrPages(normalizedPageMap, meta.pages);
+                        if (emptyPages.length > 0) {
+                            const detail = `AI OCRがページマーカーのみ、または空本文を返しました。空本文ページ: ${emptyPages.join(', ')}`;
+                            setPageErrorForPages(emptyPages, detail);
+                            console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) で空本文を検出しました: ${emptyPages.join(', ')}。`);
+                            success = false;
+                            normalizedPageMap = null;
+                        }
                     }
                 } else {
                     setPageErrorForPages(meta.pages, `バッチAPIエラー: ${JSON.stringify(result.error || "内容なし")}`);

@@ -46,31 +46,47 @@ function loadConfig() {
     }
 }
 
-function getApiKey() {
+function getProviderConfig(providerName) {
     const config = loadConfig();
-    if (config && config.gemini) {
-        return config.gemini.apiKey;
+    if (!config || !config.providers) {
+        return null;
+    }
+    return config.providers[providerName] || null;
+}
+
+function getToolConfig(toolName) {
+    const config = loadConfig();
+    if (!config || !config.tools) {
+        return null;
+    }
+    return config.tools[toolName] || null;
+}
+
+function getApiKey() {
+    const gemini = getProviderConfig('gemini');
+    if (gemini?.apiKey) {
+        return gemini.apiKey;
     }
     return process.env.GEMINI_API_KEY;
 }
 
 function getGeminiChatModel() {
-    const config = loadConfig();
-    if (config && config.gemini) {
-        if (config.gemini.chatModel) {
-            return config.gemini.chatModel;
-        }
+    const gemini = getProviderConfig('gemini');
+    if (gemini?.chatModel) {
+        return gemini.chatModel;
     }
     if (process.env.GEMINI_CHAT_MODEL) {
         return process.env.GEMINI_CHAT_MODEL;
     }
-    throw new Error('Gemini chat model is not configured. Set gemini.chatModel in config.json or GEMINI_CHAT_MODEL.');
+    throw new Error('Gemini chat model is not configured. Set providers.gemini.chatModel in config.json or GEMINI_CHAT_MODEL.');
 }
 
 module.exports = {
     findConfigPath,
     getProjectRoot,
     loadConfig,
+    getProviderConfig,
+    getToolConfig,
     getApiKey,
     getGeminiChatModel
 };

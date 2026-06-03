@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { extractPdfToImages } = require('./pdf_to_image');
-const { loadConfig } = require('./gemini_client');
+const { getProviderConfig } = require('./gemini_client');
 
 function formatTime(ms) {
     if (isNaN(ms) || ms < 0) return "00:00:00";
@@ -13,8 +13,7 @@ function formatTime(ms) {
 }
 
 function getOpenAIConfig() {
-    const config = loadConfig();
-    return config?.openai || null;
+    return getProviderConfig('openai');
 }
 
 /**
