@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { findConfigPath } = require('../lib/gemini_client');
+const { findConfigPath, findAppDefaultsPath, loadAppDefaults, loadUserConfig, loadConfig } = require('../lib/gemini_client');
 
 // コンソールウィンドウの管理
 let consoleWindows = new Map();
@@ -27,54 +27,7 @@ function findUpFile(fileName) {
 }
 
 function getDefaultConfig() {
-    const templatePath = findUpFile('config.template.json');
-    if (templatePath) {
-        try {
-            return JSON.parse(fs.readFileSync(templatePath, 'utf-8'));
-        } catch (_err) {
-        }
-    }
-
-    return {
-        providers: {
-            gemini: { apiKey: '', chatModel: 'gemini-2.5-flash-preview', transcriptionModel: 'gemini-3.5-flash' },
-            openai: { apiKey: '', chatModel: 'gpt-4o', transcriptionModel: 'gpt-4o-transcribe-diarize' },
-            claude: { apiKey: '', chatModel: 'claude-opus-4-6' }
-        },
-        ocr: {
-            provider: 'gemini',
-            target: 'general',
-            mode: 'sync',
-            batchSize: 4,
-            preferPdfText: false,
-            autoRename: false,
-            skipFormattedRename: false
-        },
-        transcription: {
-            provider: 'gemini',
-            language: 'ja',
-            target: 'general',
-            mode: 'sync',
-            batchSize: 4,
-            autoRename: false,
-            skipFormattedRename: false,
-            silenceTrim: {
-                enabled: false,
-                thresholdDb: -35,
-                minSilenceSec: 1,
-                paddingSec: 0.2,
-                outputFormat: 'm4a',
-                outputBitrate: '96k'
-            }
-        },
-        tools: {
-            ndlocrLite: {
-                parallelJobs: 'auto',
-                pageChunkSize: 8,
-                imageDpi: 300
-            }
-        }
-    };
+    return loadAppDefaults();
 }
 
 function getWritableConfigPath() {
@@ -82,19 +35,27 @@ function getWritableConfigPath() {
     if (existing) return existing;
     const packagePath = findUpFile('package.json');
     if (packagePath) return path.join(path.dirname(packagePath), 'config.json');
+    const defaultsPath = findAppDefaultsPath();
+    if (defaultsPath) return path.join(path.dirname(defaultsPath), 'config.json');
     return path.join(process.cwd(), 'config.json');
 }
 
 function loadConfigForGui() {
     const configPath = findConfigPath();
+    const defaults = getDefaultConfig();
+    const userConfig = loadUserConfig() || {};
+    const config = loadConfig() || defaults;
+
     if (!configPath) {
-        return { path: getWritableConfigPath(), exists: false, config: getDefaultConfig() };
+        return { path: getWritableConfigPath(), exists: false, config, userConfig, defaults };
     }
 
     return {
         path: configPath,
         exists: true,
-        config: JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+        config,
+        userConfig,
+        defaults
     };
 }
 

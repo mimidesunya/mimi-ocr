@@ -4,7 +4,7 @@
   "description": "日本語文書 OCR ツール（Gemini / Claude / OpenAI 対応）",
   "main": "dist/src/gui/main.js",
   "scripts": {
-    "build": "tsc -p . && node scripts/write_build_info.js dist/src/lib/build_info.json && copyfiles -u 1 \"src/**/*.html\" dist/src && copyfiles -u 1 \"src/templates/*.md\" dist/src",
+    "build": "tsc -p . && node scripts/write_build_info.js dist/src/lib/build_info.json && copyfiles -u 1 \"src/**/*.html\" dist/src && copyfiles -u 1 \"src/templates/*.md\" dist/src && copyfiles app.defaults.json config.template.json dist",
     "gui": "npm run build && electron dist/src/gui/main.js",
     "ocr": "npm run build && node dist/src/ocr.js",
     "merge": "npm run build && node dist/src/merge_pages.js",

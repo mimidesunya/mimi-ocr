@@ -1,8 +1,19 @@
 # 設定ファイル
 
+## ファイルの役割
+
+設定は2段階で読み込みます。
+
+| ファイル | 役割 | 配布 |
+| --- | --- | --- |
+| `app.defaults.json` | アプリ標準値。モデル名、CLI既定値、外部ツールの初期値を入れます | コミット・配布する |
+| `config.json` | ユーザー固有の設定。APIキーや標準値から変えたい項目だけ入れます | コミットしない |
+
+実行時は `app.defaults.json` を先に読み、同じキーが `config.json` にあれば `config.json` 側で上書きします。
+
 ## 設定ファイルの場所
 
-このプロジェクトは `config.json` を上方向に探索して読み込みます。探索開始位置は次の通りです。
+このプロジェクトは `config.json` と `app.defaults.json` を上方向に探索して読み込みます。探索開始位置は次の通りです。
 
 - 現在の作業ディレクトリ
 - 実行中スクリプトのディレクトリ
@@ -16,96 +27,60 @@
 Copy-Item config.template.json config.json
 ```
 
-その後、GUI上部の「設定」からAPIキー、モデル名、OCR/音声認識の既定値を設定できます。「APIキー」タブには取得手順も表示されます。CLI中心で使う場合は、従来どおり `config.json` を直接編集しても構いません。
+その後、GUI上部の「設定」からAPIキー、モデル名、外部ツールの調整値を設定できます。「APIキー」タブには取得手順も表示されます。GUIのOCR/音声認識の選択は、最後に使った状態を自動保存します。CLI中心で使う場合は、従来どおり `config.json` を直接編集しても構いません。
 
-## 全体構造
+## `config.json` の最小形
 
 ```json
 {
   "providers": {
     "gemini": {
-      "apiKey": "YOUR_GEMINI_API_KEY",
-      "chatModel": "gemini-2.5-flash-preview",
-      "transcriptionModel": "gemini-3.5-flash"
+      "apiKey": "YOUR_GEMINI_API_KEY"
     },
     "openai": {
-      "apiKey": "YOUR_OPENAI_API_KEY",
-      "chatModel": "gpt-4o",
-      "transcriptionModel": "gpt-4o-transcribe-diarize"
+      "apiKey": "YOUR_OPENAI_API_KEY"
     },
     "claude": {
-      "apiKey": "YOUR_CLAUDE_API_KEY",
-      "chatModel": "claude-opus-4-6"
-    }
-  },
-  "ocr": {
-    "provider": "gemini",
-    "target": "general",
-    "mode": "sync",
-    "batchSize": 4,
-    "preferPdfText": false,
-    "autoRename": false,
-    "skipFormattedRename": false
-  },
-  "transcription": {
-    "provider": "gemini",
-    "language": "ja",
-    "target": "general",
-    "mode": "sync",
-    "batchSize": 4,
-    "autoRename": false,
-    "skipFormattedRename": false,
-    "silenceTrim": {
-      "enabled": false,
-      "thresholdDb": -35,
-      "minSilenceSec": 1,
-      "paddingSec": 0.2,
-      "outputFormat": "m4a",
-      "outputBitrate": "96k"
-    }
-  },
-  "tools": {
-    "ndlocrLite": {
-      "parallelJobs": "auto",
-      "pageChunkSize": 8,
-      "imageDpi": 300
+      "apiKey": "YOUR_CLAUDE_API_KEY"
     }
   }
 }
 ```
 
+モデル名、OCR/音声認識のCLI既定値、外部ツールの初期値は `app.defaults.json` に入っています。変えたい項目だけ `config.json` に追加してください。
+
 ## セクション
 
 ### `providers`
 
-AIサービスごとのAPIキー、モデル、通信設定をまとめます。APIキーはOCR結果メタデータには記録しません。
+AIサービスごとのAPIキーとモデル上書きをまとめます。APIキーはOCR結果メタデータには記録しません。
 
 #### `providers.gemini`
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `apiKey` | Gemini利用時に必要 | Gemini API キー。空欄なら `GEMINI_API_KEY` を使います |
-| `chatModel` | OCR利用時に必要 | OCR/文書処理用モデル。空欄なら `GEMINI_CHAT_MODEL` を使います |
-| `transcriptionModel` | 音声認識利用時に必要 | Gemini 音声認識用モデル |
+| `chatModel` | 任意 | OCR/文書処理用モデル。未指定なら `app.defaults.json` または `GEMINI_CHAT_MODEL` を使います |
+| `transcriptionModel` | 任意 | Gemini 音声認識用モデル。未指定なら `app.defaults.json` を使います |
 
 #### `providers.claude`
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `apiKey` | Claude利用時に必要 | Anthropic API キー |
-| `chatModel` | 任意 | OCR/文書処理用モデル |
+| `chatModel` | 任意 | OCR/文書処理用モデル。未指定なら `app.defaults.json` を使います |
 
 #### `providers.openai`
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `apiKey` | OpenAI利用時に必要 | OpenAI API キー。空欄なら `OPENAI_API_KEY` を使います |
-| `chatModel` | 任意 | OCR/文書処理用モデル |
-| `transcriptionModel` | 音声認識利用時に必要 | OpenAI 音声認識用モデル |
+| `chatModel` | 任意 | OCR/文書処理用モデル。未指定なら `app.defaults.json` を使います |
+| `transcriptionModel` | 任意 | OpenAI 音声認識用モデル。未指定なら `app.defaults.json` を使います |
 
 ### `ocr`
 
-CLI OCR の既定値です。GUIでは画面上の選択が優先されます。
+CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユーザーごとに変えたい場合だけ `config.json` で上書きします。GUIでは画面上の最後の選択が優先されます。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
@@ -119,7 +94,7 @@ CLI OCR の既定値です。GUIでは画面上の選択が優先されます。
 
 ### `transcription`
 
-音声認識 CLI の既定値です。モデル名とAPIキーは `providers.openai` / `providers.gemini` から読みます。
+音声認識 CLI の既定値です。通常は `app.defaults.json` 側に置き、ユーザーごとに変えたい場合だけ `config.json` で上書きします。モデル名とAPIキーは `providers.openai` / `providers.gemini` から読みます。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
@@ -143,7 +118,7 @@ ffmpeg / ffprobe は `config.json` には書きません。PATH上の `ffmpeg` �
 
 ### `tools.ndlocrLite`
 
-`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。プログラム本体は `.mimi-tools/ndlocr-lite` に自動取得し、専用Python環境も `.mimi-tools/ndlocr-lite-venv` に作ります。
+`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。標準値は `app.defaults.json` にあります。プログラム本体は `.mimi-tools/ndlocr-lite` に自動取得し、専用Python環境も `.mimi-tools/ndlocr-lite-venv` に作ります。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
@@ -164,7 +139,7 @@ ffmpeg / ffprobe は `config.json` には書きません。PATH上の `ffmpeg` �
 
 ## OCR結果メタデータに記録される設定
 
-OCR 直後の Markdown 末尾には、`<!-- mimi-ocr-settings ... -->` 形式で実行設定が記録されます。`config.json` からは主に次の値だけを参照します。
+OCR 直後の Markdown 末尾には、`<!-- mimi-ocr-settings ... -->` 形式で実行設定が記録されます。合成後の設定からは主に次の値だけを参照します。
 
 - 使用AIプロバイダーのモデル名（例: `providers.gemini.chatModel`, `providers.claude.chatModel`, `providers.openai.chatModel`）
 - `tools.ndlocrLite.parallelJobs`

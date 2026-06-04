@@ -34,7 +34,7 @@ class ClaudeClient {
         if (!config || !config.apiKey) throw new Error("Claude API Key not found in config.json");
         this.apiKey = config.apiKey;
         this.baseUrl = config.baseUrl || "https://api.anthropic.com/v1/messages";
-        this.model = config.chatModel || "claude-opus-4-6";
+        this.model = config.chatModel || "claude-opus-4-8";
         this.timeoutMs = config.timeoutMs || 300000;
         this.maxRetries = config.maxRetries || 3;
         this.client = new Anthropic({

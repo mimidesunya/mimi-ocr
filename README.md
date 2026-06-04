@@ -41,7 +41,7 @@ npm install
 Copy-Item config.template.json config.json
 ```
 
-GUI上部の「設定」から API キーとモデル名を設定できます。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。
+GUI上部の「設定」から API キーとモデル名の上書きを設定できます。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。アプリ標準値は `app.defaults.json` に入っています。
 
 ### 3. GUI を起動する
 

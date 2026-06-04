@@ -36,7 +36,7 @@ Copy-Item config.template.json config.json
 
 対処:
 
-- `config.json` の `providers.gemini.chatModel` を設定する
+- モデル名を標準値から変えたい場合は、GUIの設定または `config.json` の `providers.gemini.chatModel` で上書きする
 - もしくは環境変数 `GEMINI_CHAT_MODEL` を設定する
 
 ## `OpenAI API Key not found in config.json`

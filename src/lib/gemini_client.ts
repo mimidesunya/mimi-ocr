@@ -1,7 +1,48 @@
 const fs = require('fs');
 const path = require('path');
 
-function findConfigPath() {
+const FALLBACK_APP_DEFAULTS = {
+    providers: {
+        gemini: { chatModel: 'gemini-2.5-flash-preview', transcriptionModel: 'gemini-3.5-flash' },
+        openai: { chatModel: 'gpt-4o', transcriptionModel: 'gpt-4o-transcribe-diarize' },
+        claude: { chatModel: 'claude-opus-4-8' }
+    },
+    ocr: {
+        provider: 'gemini',
+        target: 'general',
+        mode: 'sync',
+        batchSize: 4,
+        preferPdfText: false,
+        autoRename: false,
+        skipFormattedRename: false
+    },
+    transcription: {
+        provider: 'gemini',
+        language: 'ja',
+        target: 'general',
+        mode: 'sync',
+        batchSize: 4,
+        autoRename: false,
+        skipFormattedRename: false,
+        silenceTrim: {
+            enabled: false,
+            thresholdDb: -35,
+            minSilenceSec: 1,
+            paddingSec: 0.2,
+            outputFormat: 'm4a',
+            outputBitrate: '96k'
+        }
+    },
+    tools: {
+        ndlocrLite: {
+            parallelJobs: 'auto',
+            pageChunkSize: 8,
+            imageDpi: 300
+        }
+    }
+};
+
+function findUpFile(fileName) {
     const startDirs = [process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
     const visited = new Set();
 
@@ -9,10 +50,8 @@ function findConfigPath() {
         let currentDir = path.resolve(startDir);
         while (!visited.has(currentDir)) {
             visited.add(currentDir);
-            const configPath = path.join(currentDir, 'config.json');
-            if (fs.existsSync(configPath)) {
-                return configPath;
-            }
+            const candidate = path.join(currentDir, fileName);
+            if (fs.existsSync(candidate)) return candidate;
             const parentDir = path.dirname(currentDir);
             if (parentDir === currentDir) {
                 break;
@@ -24,26 +63,77 @@ function findConfigPath() {
     return null;
 }
 
-function getProjectRoot() {
-    const configPath = findConfigPath();
-    if (configPath) {
-        return path.dirname(configPath);
-    }
-    return process.cwd();
+function findConfigPath() {
+    return findUpFile('config.json');
 }
 
-function loadConfig() {
-    const configPath = findConfigPath();
-    if (!configPath || !fs.existsSync(configPath)) {
-        return null;
-    }
+function findAppDefaultsPath() {
+    return findUpFile('app.defaults.json');
+}
+
+function readJsonFile(filePath) {
     try {
-        const content = fs.readFileSync(configPath, 'utf-8');
+        const content = fs.readFileSync(filePath, 'utf-8');
         return JSON.parse(content);
     } catch (err) {
         console.error(`Config load error: ${err}`);
         return null;
     }
+}
+
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function isPlainObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeConfig(base, override) {
+    const result = cloneJson(base || {});
+    if (!isPlainObject(override)) return result;
+
+    for (const [key, value] of Object.entries(override)) {
+        if (isPlainObject(value) && isPlainObject(result[key])) {
+            result[key] = mergeConfig(result[key], value);
+        } else {
+            result[key] = value;
+        }
+    }
+
+    return result;
+}
+
+function getProjectRoot() {
+    const configPath = findConfigPath();
+    if (configPath) {
+        return path.dirname(configPath);
+    }
+    const defaultsPath = findAppDefaultsPath();
+    if (defaultsPath) {
+        return path.dirname(defaultsPath);
+    }
+    return process.cwd();
+}
+
+function loadAppDefaults() {
+    const defaultsPath = findAppDefaultsPath();
+    if (!defaultsPath || !fs.existsSync(defaultsPath)) {
+        return cloneJson(FALLBACK_APP_DEFAULTS);
+    }
+    return mergeConfig(FALLBACK_APP_DEFAULTS, readJsonFile(defaultsPath) || {});
+}
+
+function loadUserConfig() {
+    const configPath = findConfigPath();
+    if (!configPath || !fs.existsSync(configPath)) {
+        return null;
+    }
+    return readJsonFile(configPath);
+}
+
+function loadConfig() {
+    return mergeConfig(loadAppDefaults(), loadUserConfig() || {});
 }
 
 function getProviderConfig(providerName) {
@@ -83,7 +173,10 @@ function getGeminiChatModel() {
 
 module.exports = {
     findConfigPath,
+    findAppDefaultsPath,
     getProjectRoot,
+    loadAppDefaults,
+    loadUserConfig,
     loadConfig,
     getProviderConfig,
     getToolConfig,

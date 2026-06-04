@@ -23,11 +23,11 @@ npm install
 Copy-Item config.template.json config.json
 ```
 
-GUI上部の「設定」からAPIキーやモデル名を設定できます。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。CLI中心で使う場合は、`config.json` を直接編集してください。
+GUI上部の「設定」からAPIキーやモデル名の上書きを設定できます。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。アプリ標準値は `app.defaults.json` に入っています。CLI中心で使う場合は、`config.json` を直接編集してください。
 
 ### 3. 必要ツールについて
 
-法匪モードは同梱テンプレートを使うため、追加設定は不要です。ffmpeg と ndlocr-lite は未設定なら初回使用時に `.mimi-tools/` へ自動準備します。既に手元のツールを使いたい場合だけ、`config.json` にパスを指定してください。
+法匪モードは同梱テンプレートを使うため、追加設定は不要です。ffmpeg と ndlocr-lite は初回使用時に `.mimi-tools/` へ自動準備します。
 
 ### 4. ビルドする
 
@@ -76,4 +76,4 @@ npm run build:launcher
 ## セキュリティ注意
 
 - `config.json` にはAPIキーが入るため、共有やコミットの前に取り扱いを確認してください。
-- 配布用やサンプル用途では、`config.template.json` を基準にしてください。
+- 配布用の標準値は `app.defaults.json`、ユーザー向けサンプルは `config.template.json` を基準にしてください。

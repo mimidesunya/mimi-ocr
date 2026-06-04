@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const consoleOutput   = document.getElementById('consoleOutput') as HTMLElement;
     const progressBar     = document.getElementById('progressBar') as HTMLElement;
     const toolCards       = document.querySelectorAll<HTMLElement>('.tool-card');
+    const toolHelpBtns    = document.querySelectorAll<HTMLElement>('[data-tool-help]');
     const batchSizeInput  = document.getElementById('batchSizeInput') as HTMLInputElement;
     const splitJsonRow    = document.getElementById('splitJsonRow') as HTMLElement;
     const splitJsonInput  = document.getElementById('splitJsonInput') as HTMLTextAreaElement;
@@ -18,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const apiHelpBtn      = document.getElementById('apiHelpBtn') as HTMLButtonElement;
     const configModal     = document.getElementById('configModal') as HTMLElement;
     const configCloseBtn  = document.getElementById('configCloseBtn') as HTMLButtonElement;
+    const configCancelBtn = document.getElementById('configCancelBtn') as HTMLButtonElement;
     const configSaveBtn   = document.getElementById('configSaveBtn') as HTMLButtonElement;
     const configReloadBtn = document.getElementById('configReloadBtn') as HTMLButtonElement;
     const configStatus    = document.getElementById('configStatus') as HTMLElement;
@@ -25,6 +27,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const configTabBtns   = document.querySelectorAll<HTMLElement>('[data-config-tab]');
     const configSettingsPane = document.getElementById('configSettingsPane') as HTMLElement;
     const configKeysPane     = document.getElementById('configKeysPane') as HTMLElement;
+    const toolHelpModal   = document.getElementById('toolHelpModal') as HTMLElement;
+    const toolHelpTitle   = document.getElementById('toolHelpTitle') as HTMLElement;
+    const toolHelpBody    = document.getElementById('toolHelpBody') as HTMLElement;
+    const toolHelpCloseBtn = document.getElementById('toolHelpCloseBtn') as HTMLButtonElement;
+    const toolHelpOkBtn   = document.getElementById('toolHelpOkBtn') as HTMLButtonElement;
 
     const ocrBtns      = document.querySelectorAll<HTMLElement>('[data-ocr-mode]');
     const aiBtns       = document.querySelectorAll<HTMLElement>('[data-ai]');
@@ -79,6 +86,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let pdfPageRanges: Record<string, string> = {};
     let draggedPdfPageIndex: number | null = null;
     let loadedConfig: any = null;
+    let loadedUserConfig: any = {};
+    let loadedDefaults: any = {};
     const GUI_STATE_KEY = 'mimi-ocr-gui-state-v1';
 
     const isOcrTool = (key: string) => key === 'ocr';
@@ -95,6 +104,181 @@ document.addEventListener('DOMContentLoaded', () => {
         'pdf_pages':   'OCR結果をもとにPDFページを抽出・結合・2面割付'
     };
 
+    type ToolHelpPage = {
+        title: string;
+        summary: string;
+        sections: { title: string; items: string[] }[];
+    };
+
+    const toolHelpPages: Record<ScriptKey, ToolHelpPage> = {
+        ocr: {
+            title: 'OCR',
+            summary: 'PDF、Word、画像などを読み取り、検索しやすいMarkdown文章にします。紙の資料をテキスト化したいときに使います。',
+            sections: [
+                {
+                    title: '入れるファイル',
+                    items: [
+                        'PDF、Word、ODT、PowerPoint、画像ファイルを入れられます。',
+                        'フォルダを入れると、中の対応ファイルをまとめて処理します。'
+                    ]
+                },
+                {
+                    title: '主な設定',
+                    items: [
+                        '出力は、ふつうの文章なら「一般」、裁判資料の形に寄せるなら「法匪」を選びます。',
+                        'OCRは、通常は「AIのみ」で十分です。古い印刷物や読みにくいPDFは「ndlocr+AI」を試します。',
+                        'AIは、速さや料金を重視するならGemini、必要に応じてClaudeやOpenAIを選びます。',
+                        'バッチは大量ページ向けです。止まりやすいときは「同期」に戻します。'
+                    ]
+                },
+                {
+                    title: '出てくるもの',
+                    items: [
+                        '元ファイルと同じ場所に、ページ付きのMarkdownが作られます。',
+                        '自動改名をOnにすると、内容を見てファイル名も付け直します。'
+                    ]
+                }
+            ]
+        },
+        transcribe_audio: {
+            title: '音声認識',
+            summary: '録音ファイルを読み取り、話した内容をMarkdownにします。会議、面談、裁判関係の録音などを文章にしたいときに使います。',
+            sections: [
+                {
+                    title: '入れるファイル',
+                    items: [
+                        'm4a、mp3、wavなどの音声ファイルを入れます。',
+                        '長い録音は時間がかかり、API料金も増えます。まず短いファイルで試すと安心です。'
+                    ]
+                },
+                {
+                    title: '主な設定',
+                    items: [
+                        '音声AIは、GeminiかOpenAIを選びます。',
+                        '出力は、ふつうの議事録なら「一般」、反訳書風にしたいなら「法匪」を選びます。',
+                        '無音カットをOnにすると、長い沈黙を先に短くしてからAIへ送ります。'
+                    ]
+                },
+                {
+                    title: '出てくるもの',
+                    items: [
+                        '録音内容を書き起こしたMarkdownが作られます。',
+                        '話者分離に対応したモデルでは、話している人ごとに分かれた形を目指します。'
+                    ]
+                }
+            ]
+        },
+        merge: {
+            title: 'ページ結合',
+            summary: 'OCR結果に入っているページ区切りを整理し、読みやすい1本のMarkdownにまとめます。',
+            sections: [
+                {
+                    title: '入れるファイル',
+                    items: [
+                        'OCRで作られた「_paged.md」のMarkdownを入れます。',
+                        'フォルダを入れると、中の対象Markdownをまとめて処理します。'
+                    ]
+                },
+                {
+                    title: '使う場面',
+                    items: [
+                        'ページごとの区切りより、本文を続けて読みたいときに使います。',
+                        'OCR後の文章を整理して、検索や引用をしやすくしたいときに向いています。'
+                    ]
+                },
+                {
+                    title: '注意',
+                    items: [
+                        '元のPDFを直接読むツールではありません。先にOCRを済ませてください。',
+                        'ページ番号情報を完全に消したい用途ではなく、本文を読みやすく整える用途です。'
+                    ]
+                }
+            ]
+        },
+        split: {
+            title: '文書分割',
+            summary: '1つの長いPDFやOCR結果を、指定したページ範囲ごとに別々の文書へ分けます。',
+            sections: [
+                {
+                    title: '入れるファイル',
+                    items: [
+                        '分割したいPDF、またはOCR後のMarkdownを入れます。',
+                        'どこで分けるかは「分割定義JSON」に書きます。'
+                    ]
+                },
+                {
+                    title: 'JSONの考え方',
+                    items: [
+                        '1つの文書につき、ファイル名、開始ページ、終了ページを書きます。',
+                        '例は画面の入力欄にあります。まずは1件だけ書いて試すと分かりやすいです。'
+                    ]
+                },
+                {
+                    title: '注意',
+                    items: [
+                        'ページ番号を間違えると、違うページが別文書に入ります。',
+                        '大事な資料は、分割後にページが抜けていないか確認してください。'
+                    ]
+                }
+            ]
+        },
+        deblank: {
+            title: '白紙除去',
+            summary: 'OCR結果を見ながら、ほぼ白紙のページを取り除いたPDFとMarkdownを作ります。',
+            sections: [
+                {
+                    title: '入れるファイル',
+                    items: [
+                        '白紙を取り除きたいPDFを入れます。',
+                        '同じ場所に、そのPDFのOCR結果Markdownがある必要があります。'
+                    ]
+                },
+                {
+                    title: '使う場面',
+                    items: [
+                        'スキャンした資料に白紙ページが多いときに使います。',
+                        '提出用や確認用に、ページ数を減らしたPDFを作りたいときに便利です。'
+                    ]
+                },
+                {
+                    title: '注意',
+                    items: [
+                        '少しだけ文字があるページは白紙ではないと判断されることがあります。',
+                        '処理後のPDFとMarkdownを見て、必要なページが残っているか確認してください。'
+                    ]
+                }
+            ]
+        },
+        pdf_pages: {
+            title: 'PDF抽出',
+            summary: 'OCR結果を手がかりにして、PDFから必要なページだけを抜き出します。複数PDFを順番に並べることもできます。',
+            sections: [
+                {
+                    title: '入れるファイル',
+                    items: [
+                        '抽出したいPDFを入れます。',
+                        '同じ場所に、そのPDFのOCR結果Markdownがある必要があります。'
+                    ]
+                },
+                {
+                    title: 'ページ指定',
+                    items: [
+                        '各PDFの右側に、取り出したいページ番号を書きます。例: 1-3,7,10',
+                        '「PDF」はPDFそのもののページ番号、「印刷」は紙に印字されたページ番号を使う考え方です。',
+                        '2面割付のPDFでは「2面」をOnにし、読む方向を選びます。'
+                    ]
+                },
+                {
+                    title: '出てくるもの',
+                    items: [
+                        '指定ページだけをまとめたPDFが作られます。',
+                        '対応するMarkdownも作られ、ページ番号が抽出後の順番に直されます。'
+                    ]
+                }
+            ]
+        }
+    };
+
     function inputValue(id: string) {
         return (document.getElementById(id) as HTMLInputElement).value.trim();
     }
@@ -103,28 +287,49 @@ document.addEventListener('DOMContentLoaded', () => {
         (document.getElementById(id) as HTMLInputElement).value = String(value ?? '');
     }
 
-    function checkedValue(id: string) {
-        return (document.getElementById(id) as HTMLInputElement).checked;
-    }
-
-    function setCheckedValue(id: string, value: any) {
-        (document.getElementById(id) as HTMLInputElement).checked = value === true;
-    }
-
-    function selectValue(id: string) {
-        return (document.getElementById(id) as HTMLSelectElement).value;
-    }
-
-    function setSelectValue(id: string, value: any, fallback: string) {
-        const select = document.getElementById(id) as HTMLSelectElement;
-        const next = String(value || fallback);
-        select.value = Array.from(select.options).some(option => option.value === next) ? next : fallback;
-    }
-
     function positiveInt(value: any, fallback: number, min = 1, max = 999) {
         const parsed = Number.parseInt(String(value || ''), 10);
         if (!Number.isFinite(parsed) || parsed < min) return fallback;
         return Math.min(parsed, max);
+    }
+
+    function isPlainObject(value: any) {
+        return value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    function mergeConfig(base: any, override: any): any {
+        const result = JSON.parse(JSON.stringify(base || {}));
+        if (!isPlainObject(override)) return result;
+        Object.entries(override).forEach(([key, value]) => {
+            if (isPlainObject(value) && isPlainObject(result[key])) {
+                result[key] = mergeConfig(result[key], value);
+            } else {
+                result[key] = value;
+            }
+        });
+        return result;
+    }
+
+    function deepEqual(a: any, b: any) {
+        if (a === b) return true;
+        if (Array.isArray(a) || Array.isArray(b)) {
+            if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+            return a.every((value, index) => deepEqual(value, b[index]));
+        }
+        if (isPlainObject(a) || isPlainObject(b)) {
+            if (!isPlainObject(a) || !isPlainObject(b)) return false;
+            const aKeys = Object.keys(a).sort();
+            const bKeys = Object.keys(b).sort();
+            if (!deepEqual(aKeys, bKeys)) return false;
+            return aKeys.every(key => deepEqual(a[key], b[key]));
+        }
+        return false;
+    }
+
+    function assignIfObjectChanged(config: any, key: string, value: any, defaultValue: any) {
+        if (isPlainObject(value) && !deepEqual(value, defaultValue)) {
+            config[key] = value;
+        }
     }
 
     function setConfigStatus(message: string, type: 'normal' | 'success' | 'error' = 'normal') {
@@ -140,14 +345,51 @@ document.addEventListener('DOMContentLoaded', () => {
         configKeysPane.classList.toggle('hidden', selected !== 'keys');
     }
 
+    function clearElement(element: HTMLElement) {
+        while (element.firstChild) element.removeChild(element.firstChild);
+    }
+
+    function appendTextElement(parent: HTMLElement, tagName: string, className: string, text: string) {
+        const element = document.createElement(tagName);
+        element.className = className;
+        element.textContent = text;
+        parent.appendChild(element);
+        return element;
+    }
+
+    function renderToolHelp(script: ScriptKey) {
+        const page = toolHelpPages[script] || toolHelpPages.ocr;
+        toolHelpTitle.textContent = `${page.title} のヘルプ`;
+        clearElement(toolHelpBody);
+        appendTextElement(toolHelpBody, 'div', 'tool-help-summary', page.summary);
+
+        page.sections.forEach(section => {
+            const sectionEl = document.createElement('div');
+            sectionEl.className = 'tool-help-section';
+            appendTextElement(sectionEl, 'h3', '', section.title);
+            const list = document.createElement('ul');
+            section.items.forEach(item => {
+                appendTextElement(list, 'li', '', item);
+            });
+            sectionEl.appendChild(list);
+            toolHelpBody.appendChild(sectionEl);
+        });
+    }
+
+    function openToolHelp(script: ScriptKey) {
+        renderToolHelp(script);
+        toolHelpModal.classList.remove('hidden');
+    }
+
+    function closeToolHelpModal() {
+        toolHelpModal.classList.add('hidden');
+    }
+
     function populateConfigForm(config: any) {
         const providers = config?.providers || {};
         const gemini = providers.gemini || {};
         const openai = providers.openai || {};
         const claude = providers.claude || {};
-        const ocr = config?.ocr || {};
-        const transcription = config?.transcription || {};
-        const silenceTrim = transcription.silenceTrim || {};
         const ndlocrLite = config?.tools?.ndlocrLite || {};
 
         setInputValue('cfgGeminiApiKey', gemini.apiKey || '');
@@ -157,20 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgOpenaiChatModel', openai.chatModel || 'gpt-4o');
         setInputValue('cfgOpenaiTranscriptionModel', openai.transcriptionModel || 'gpt-4o-transcribe-diarize');
         setInputValue('cfgClaudeApiKey', claude.apiKey || '');
-        setInputValue('cfgClaudeChatModel', claude.chatModel || 'claude-opus-4-6');
-
-        setSelectValue('cfgOcrProvider', ocr.provider, 'gemini');
-        setSelectValue('cfgOcrTarget', ocr.target, 'general');
-        setSelectValue('cfgOcrMode', ocr.mode, 'sync');
-        setInputValue('cfgOcrBatchSize', positiveInt(ocr.batchSize, 4, 1, 20));
-        setCheckedValue('cfgPreferPdfText', ocr.preferPdfText);
-        setCheckedValue('cfgAutoRename', ocr.autoRename);
-        setCheckedValue('cfgSkipFormattedRename', ocr.skipFormattedRename);
-
-        setSelectValue('cfgTranscriptionProvider', transcription.provider, 'gemini');
-        setSelectValue('cfgTranscriptionMode', transcription.mode, 'sync');
-        setInputValue('cfgTranscriptionBatchSize', positiveInt(transcription.batchSize, 4, 1, 20));
-        setCheckedValue('cfgSilenceTrim', silenceTrim.enabled);
+        setInputValue('cfgClaudeChatModel', claude.chatModel || 'claude-opus-4-8');
 
         setInputValue('cfgNdlocrParallelJobs', ndlocrLite.parallelJobs || 'auto');
         setInputValue('cfgNdlocrPageChunkSize', positiveInt(ndlocrLite.pageChunkSize, 8, 1, 200));
@@ -178,63 +407,67 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function readConfigForm() {
-        const previous = loadedConfig && typeof loadedConfig === 'object' ? loadedConfig : {};
-        const previousTranscription = previous.transcription || {};
-        const previousSilenceTrim = previousTranscription.silenceTrim || {};
+        const defaults = isPlainObject(loadedDefaults) ? loadedDefaults : {};
+        const previousUser = isPlainObject(loadedUserConfig) ? loadedUserConfig : {};
+        const defaultProviders = defaults.providers || {};
+        const defaultTools = defaults.tools || {};
 
-        const config = {
-            providers: {
-                gemini: {
-                    apiKey: inputValue('cfgGeminiApiKey'),
-                    chatModel: inputValue('cfgGeminiChatModel') || 'gemini-2.5-flash-preview',
-                    transcriptionModel: inputValue('cfgGeminiTranscriptionModel') || 'gemini-3.5-flash',
-                },
-                openai: {
-                    apiKey: inputValue('cfgOpenaiApiKey'),
-                    chatModel: inputValue('cfgOpenaiChatModel') || 'gpt-4o',
-                    transcriptionModel: inputValue('cfgOpenaiTranscriptionModel') || 'gpt-4o-transcribe-diarize',
-                },
-                claude: {
-                    apiKey: inputValue('cfgClaudeApiKey'),
-                    chatModel: inputValue('cfgClaudeChatModel') || 'claude-opus-4-6',
-                },
-            },
-            ocr: {
-                provider: selectValue('cfgOcrProvider'),
-                target: selectValue('cfgOcrTarget'),
-                mode: selectValue('cfgOcrMode'),
-                batchSize: positiveInt(inputValue('cfgOcrBatchSize'), 4, 1, 20),
-                preferPdfText: checkedValue('cfgPreferPdfText'),
-                autoRename: checkedValue('cfgAutoRename'),
-                skipFormattedRename: checkedValue('cfgSkipFormattedRename'),
-            },
-            transcription: {
-                provider: selectValue('cfgTranscriptionProvider'),
-                language: previousTranscription.language || 'ja',
-                target: previousTranscription.target || selectValue('cfgOcrTarget') || 'general',
-                mode: selectValue('cfgTranscriptionMode'),
-                batchSize: positiveInt(inputValue('cfgTranscriptionBatchSize'), 4, 1, 20),
-                autoRename: previousTranscription.autoRename === true,
-                skipFormattedRename: previousTranscription.skipFormattedRename === true,
-                silenceTrim: {
-                    enabled: checkedValue('cfgSilenceTrim'),
-                    thresholdDb: Number(previousSilenceTrim.thresholdDb ?? -35),
-                    minSilenceSec: Number(previousSilenceTrim.minSilenceSec ?? 1),
-                    paddingSec: Number(previousSilenceTrim.paddingSec ?? 0.2),
-                    outputFormat: previousSilenceTrim.outputFormat || 'm4a',
-                    outputBitrate: previousSilenceTrim.outputBitrate || '96k',
-                },
-            },
-            tools: {
-                ndlocrLite: {
-                    parallelJobs: inputValue('cfgNdlocrParallelJobs') || 'auto',
-                    pageChunkSize: positiveInt(inputValue('cfgNdlocrPageChunkSize'), 8, 1, 200),
-                    imageDpi: positiveInt(inputValue('cfgNdlocrImageDpi'), 300, 72, 600),
-                },
-            },
+        const config: any = {
+            providers: {},
         };
 
-        loadedConfig = config;
+        function readProvider(providerName: string, fields: Record<string, string>) {
+            const provider: any = {};
+            const defaultsForProvider = defaultProviders[providerName] || {};
+            const apiKey = inputValue(fields.apiKey);
+            if (apiKey) provider.apiKey = apiKey;
+
+            Object.entries(fields).forEach(([fieldName, inputId]) => {
+                if (fieldName === 'apiKey') return;
+                const value = inputValue(inputId);
+                if (value && value !== defaultsForProvider[fieldName]) {
+                    provider[fieldName] = value;
+                }
+            });
+
+            if (Object.keys(provider).length > 0) {
+                config.providers[providerName] = provider;
+            }
+        }
+
+        readProvider('gemini', {
+            apiKey: 'cfgGeminiApiKey',
+            chatModel: 'cfgGeminiChatModel',
+            transcriptionModel: 'cfgGeminiTranscriptionModel',
+        });
+        readProvider('openai', {
+            apiKey: 'cfgOpenaiApiKey',
+            chatModel: 'cfgOpenaiChatModel',
+            transcriptionModel: 'cfgOpenaiTranscriptionModel',
+        });
+        readProvider('claude', {
+            apiKey: 'cfgClaudeApiKey',
+            chatModel: 'cfgClaudeChatModel',
+        });
+
+        if (Object.keys(config.providers).length === 0) {
+            delete config.providers;
+        }
+
+        const ndlocrLite = {
+            parallelJobs: inputValue('cfgNdlocrParallelJobs') || 'auto',
+            pageChunkSize: positiveInt(inputValue('cfgNdlocrPageChunkSize'), 8, 1, 200),
+            imageDpi: positiveInt(inputValue('cfgNdlocrImageDpi'), 300, 72, 600),
+        };
+        if (!deepEqual(ndlocrLite, defaultTools.ndlocrLite || {})) {
+            config.tools = { ndlocrLite };
+        }
+
+        assignIfObjectChanged(config, 'ocr', previousUser.ocr, defaults.ocr);
+        assignIfObjectChanged(config, 'transcription', previousUser.transcription, defaults.transcription);
+
+        loadedUserConfig = config;
+        loadedConfig = mergeConfig(defaults, config);
         return config;
     }
 
@@ -243,6 +476,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const result = await (window as any).electronAPI.loadConfig();
             loadedConfig = result.config || {};
+            loadedUserConfig = result.userConfig || {};
+            loadedDefaults = result.defaults || {};
             configPathLabel.textContent = result.path || '';
             populateConfigForm(loadedConfig);
             setConfigStatus(result.exists ? '読み込みました。' : 'config.json は未作成です。保存すると作成します。', 'success');
@@ -282,12 +517,34 @@ document.addEventListener('DOMContentLoaded', () => {
         openConfigModal('keys');
     });
 
-    configCloseBtn.addEventListener('click', closeConfigModal);
+    function handleConfigCloseClick(event: MouseEvent) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeConfigModal();
+    }
+
+    configCloseBtn.addEventListener('click', handleConfigCloseClick);
+    configCancelBtn.addEventListener('click', handleConfigCloseClick);
     configSaveBtn.addEventListener('click', saveConfigFromModal);
     configReloadBtn.addEventListener('click', loadConfigIntoModal);
+    toolHelpCloseBtn.addEventListener('click', closeToolHelpModal);
+    toolHelpOkBtn.addEventListener('click', closeToolHelpModal);
 
     configModal.addEventListener('click', (event) => {
         if (event.target === configModal) closeConfigModal();
+    });
+
+    toolHelpModal.addEventListener('click', (event) => {
+        if (event.target === toolHelpModal) closeToolHelpModal();
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        if (!toolHelpModal.classList.contains('hidden')) {
+            closeToolHelpModal();
+        } else if (!configModal.classList.contains('hidden')) {
+            closeConfigModal();
+        }
     });
 
     configTabBtns.forEach(btn => {
@@ -304,6 +561,14 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err: any) {
             setConfigStatus(`リンクを開けませんでした: ${err.message}`, 'error');
         }
+    });
+
+    toolHelpBtns.forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openToolHelp((btn.dataset.toolHelp as ScriptKey) || currentScript);
+        });
     });
 
     // ---- ツール選択 ----

@@ -13,7 +13,8 @@ config.json
 # .NET ランチャービルド
 platforms/windows/launcher/bin/
 platforms/windows/launcher/obj/
-bin/
+bin/*
+!bin/mimi-ocr.exe
 
 # .NET SDK
 .dotnet/

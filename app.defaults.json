@@ -1,0 +1,48 @@
+{
+  "providers": {
+    "gemini": {
+      "chatModel": "gemini-2.5-flash-preview",
+      "transcriptionModel": "gemini-3.5-flash"
+    },
+    "openai": {
+      "chatModel": "gpt-4o",
+      "transcriptionModel": "gpt-4o-transcribe-diarize"
+    },
+    "claude": {
+      "chatModel": "claude-opus-4-8"
+    }
+  },
+  "ocr": {
+    "provider": "gemini",
+    "target": "general",
+    "mode": "sync",
+    "batchSize": 4,
+    "preferPdfText": false,
+    "autoRename": false,
+    "skipFormattedRename": false
+  },
+  "transcription": {
+    "provider": "gemini",
+    "language": "ja",
+    "target": "general",
+    "mode": "sync",
+    "batchSize": 4,
+    "autoRename": false,
+    "skipFormattedRename": false,
+    "silenceTrim": {
+      "enabled": false,
+      "thresholdDb": -35,
+      "minSilenceSec": 1,
+      "paddingSec": 0.2,
+      "outputFormat": "m4a",
+      "outputBitrate": "96k"
+    }
+  },
+  "tools": {
+    "ndlocrLite": {
+      "parallelJobs": "auto",
+      "pageChunkSize": 8,
+      "imageDpi": 300
+    }
+  }
+}

@@ -94,15 +94,14 @@
             background: var(--card-color);
             border: 1px solid rgba(255, 255, 255, 0.05);
             border-radius: 8px;
-            padding: 10px;
+            padding: 8px 8px 8px 10px;
             cursor: pointer;
             transition: all 0.2s ease;
-            text-align: center;
-            display: flex;
-            flex-direction: row;
+            text-align: left;
+            display: grid;
+            grid-template-columns: 22px minmax(0, 1fr) 24px;
             align-items: center;
-            justify-content: center;
-            gap: 8px;
+            gap: 6px;
             height: 44px;
         }
 
@@ -126,7 +125,26 @@
         }
 
         .tool-icon { font-size: 1.1rem; color: var(--accent-color); }
-        .tool-name  { font-size: 0.8rem; font-weight: 500; }
+        .tool-name  { font-size: 0.8rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        .tool-help-btn {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 1px solid rgba(100, 181, 246, 0.28);
+            background: rgba(100, 181, 246, 0.08);
+            color: var(--accent-color);
+            cursor: help;
+            font-size: 0.78rem;
+            line-height: 1;
+            padding: 0;
+            font-family: inherit;
+        }
+
+        .tool-help-btn:hover {
+            background: rgba(100, 181, 246, 0.2);
+            border-color: var(--accent-color);
+        }
 
         /* オプションセクション */
         .options-section {
@@ -427,6 +445,7 @@
             justify-content: center;
             padding: 14px;
             z-index: 10;
+            -webkit-app-region: no-drag;
         }
 
         .modal-backdrop.hidden { display: none; }
@@ -441,6 +460,7 @@
             flex-direction: column;
             box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
             overflow: hidden;
+            -webkit-app-region: no-drag;
         }
 
         .modal-header {
@@ -594,6 +614,42 @@
             flex-wrap: wrap;
         }
 
+        .tool-help-body {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            user-select: text;
+        }
+
+        .tool-help-summary {
+            color: #fff;
+            font-size: 0.8rem;
+            line-height: 1.65;
+        }
+
+        .tool-help-section {
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.16);
+        }
+
+        .tool-help-section h3 {
+            margin: 0 0 6px;
+            font-size: 0.8rem;
+            color: var(--accent-color);
+        }
+
+        .tool-help-section ul {
+            margin: 0;
+            padding-left: 18px;
+            color: var(--secondary-text-color);
+            font-size: 0.76rem;
+            line-height: 1.65;
+        }
+
+        .tool-help-section li { margin-bottom: 3px; }
+
         .modal-footer {
             display: flex;
             justify-content: space-between;
@@ -635,26 +691,32 @@
             <div class="tool-card active" data-script="ocr">
                 <div class="tool-icon">🔍</div>
                 <div class="tool-name">OCR</div>
+                <button class="tool-help-btn" type="button" data-tool-help="ocr" title="OCRのヘルプ" aria-label="OCRのヘルプ">?</button>
             </div>
             <div class="tool-card" data-script="transcribe_audio">
                 <div class="tool-icon">🎙️</div>
                 <div class="tool-name">音声認識</div>
+                <button class="tool-help-btn" type="button" data-tool-help="transcribe_audio" title="音声認識のヘルプ" aria-label="音声認識のヘルプ">?</button>
             </div>
             <div class="tool-card" data-script="merge">
                 <div class="tool-icon">📑</div>
                 <div class="tool-name">ページ結合</div>
+                <button class="tool-help-btn" type="button" data-tool-help="merge" title="ページ結合のヘルプ" aria-label="ページ結合のヘルプ">?</button>
             </div>
             <div class="tool-card" data-script="split">
                 <div class="tool-icon">✂️</div>
                 <div class="tool-name">文書分割</div>
+                <button class="tool-help-btn" type="button" data-tool-help="split" title="文書分割のヘルプ" aria-label="文書分割のヘルプ">?</button>
             </div>
             <div class="tool-card" data-script="deblank">
                 <div class="tool-icon">🧹</div>
                 <div class="tool-name">白紙除去</div>
+                <button class="tool-help-btn" type="button" data-tool-help="deblank" title="白紙除去のヘルプ" aria-label="白紙除去のヘルプ">?</button>
             </div>
             <div class="tool-card" data-script="pdf_pages">
                 <div class="tool-icon">🧩</div>
                 <div class="tool-name">PDF抽出</div>
+                <button class="tool-help-btn" type="button" data-tool-help="pdf_pages" title="PDF抽出のヘルプ" aria-label="PDF抽出のヘルプ">?</button>
             </div>
         </div>
 
@@ -827,6 +889,7 @@
                     <div class="modal-pane" id="configSettingsPane">
                         <div class="settings-grid">
                             <div class="settings-note">保存先: <span class="settings-path" id="configPathLabel"></span></div>
+                            <div class="settings-note">OCRや音声認識の画面上の選択は、最後に使った状態を自動で覚えます。ここではAPIキー、モデル名、外部ツールの調整だけを保存します。</div>
 
                             <div class="settings-section-title">Gemini</div>
                             <label class="option-label" for="cfgGeminiApiKey">APIキー</label>
@@ -848,51 +911,7 @@
                             <label class="option-label" for="cfgClaudeApiKey">APIキー</label>
                             <input class="settings-input" id="cfgClaudeApiKey" type="password" autocomplete="off" placeholder="sk-ant-...">
                             <label class="option-label" for="cfgClaudeChatModel">OCRモデル</label>
-                            <input class="settings-input" id="cfgClaudeChatModel" type="text" placeholder="claude-opus-4-6">
-
-                            <div class="settings-section-title">OCRの既定値</div>
-                            <label class="option-label" for="cfgOcrProvider">AI</label>
-                            <select class="settings-select" id="cfgOcrProvider">
-                                <option value="gemini">Gemini</option>
-                                <option value="openai">OpenAI</option>
-                                <option value="claude">Claude</option>
-                            </select>
-                            <label class="option-label" for="cfgOcrTarget">出力</label>
-                            <select class="settings-select" id="cfgOcrTarget">
-                                <option value="general">一般</option>
-                                <option value="houhi">法匪</option>
-                            </select>
-                            <label class="option-label" for="cfgOcrMode">処理</label>
-                            <select class="settings-select" id="cfgOcrMode">
-                                <option value="sync">同期</option>
-                                <option value="batch">バッチ</option>
-                            </select>
-                            <label class="option-label" for="cfgOcrBatchSize">バッチサイズ</label>
-                            <input class="settings-input" id="cfgOcrBatchSize" type="number" min="1" max="20" value="4">
-                            <span class="option-label">その他</span>
-                            <div class="settings-check-row">
-                                <label class="settings-check"><input id="cfgPreferPdfText" type="checkbox"> PDFテキスト優先</label>
-                                <label class="settings-check"><input id="cfgAutoRename" type="checkbox"> 自動改名</label>
-                                <label class="settings-check"><input id="cfgSkipFormattedRename" type="checkbox"> 形式済みはスキップ</label>
-                            </div>
-
-                            <div class="settings-section-title">音声認識の既定値</div>
-                            <label class="option-label" for="cfgTranscriptionProvider">AI</label>
-                            <select class="settings-select" id="cfgTranscriptionProvider">
-                                <option value="gemini">Gemini</option>
-                                <option value="openai">OpenAI</option>
-                            </select>
-                            <label class="option-label" for="cfgTranscriptionMode">処理</label>
-                            <select class="settings-select" id="cfgTranscriptionMode">
-                                <option value="sync">同期</option>
-                                <option value="batch">バッチ</option>
-                            </select>
-                            <label class="option-label" for="cfgTranscriptionBatchSize">バッチサイズ</label>
-                            <input class="settings-input" id="cfgTranscriptionBatchSize" type="number" min="1" max="20" value="4">
-                            <span class="option-label">その他</span>
-                            <div class="settings-check-row">
-                                <label class="settings-check"><input id="cfgSilenceTrim" type="checkbox"> 無音カット</label>
-                            </div>
+                            <input class="settings-input" id="cfgClaudeChatModel" type="text" placeholder="claude-opus-4-8">
 
                             <div class="settings-section-title">自動準備する外部ツール</div>
                             <label class="option-label" for="cfgNdlocrParallelJobs">ndlocr並列数</label>
@@ -951,7 +970,26 @@
                     <div class="settings-status" id="configStatus"></div>
                     <div class="modal-actions">
                         <button class="context-browse-btn" id="configReloadBtn" type="button">再読込</button>
+                        <button class="context-browse-btn" id="configCancelBtn" type="button">閉じる</button>
                         <button class="context-browse-btn" id="configSaveBtn" type="button">保存</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-backdrop hidden" id="toolHelpModal">
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="toolHelpTitle">
+                <div class="modal-header">
+                    <div class="modal-title" id="toolHelpTitle">ヘルプ</div>
+                    <button class="modal-close" id="toolHelpCloseBtn" type="button" title="閉じる">×</button>
+                </div>
+                <div class="modal-body">
+                    <div class="tool-help-body" id="toolHelpBody"></div>
+                </div>
+                <div class="modal-footer">
+                    <div class="settings-status">迷ったら、まず既定のまま小さいファイルで試してください。</div>
+                    <div class="modal-actions">
+                        <button class="context-browse-btn" id="toolHelpOkBtn" type="button">閉じる</button>
                     </div>
                 </div>
             </div>
