@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { resolveFfmpegTools } = require('./tool_resolver');
 
 function runProcess(command, args): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -28,23 +29,9 @@ function removeFileQuietly(filePath) {
     }
 }
 
-function resolveFfmpegPath(settings: any = {}) {
-    return settings.ffmpegPath || process.env.FFMPEG_PATH || 'ffmpeg';
-}
-
-function resolveFfprobePath(settings: any = {}) {
-    if (settings.ffprobePath) return settings.ffprobePath;
-    if (process.env.FFPROBE_PATH) return process.env.FFPROBE_PATH;
-    const ffmpegPath = resolveFfmpegPath(settings);
-    if (/ffmpeg(?:\.exe)?$/i.test(ffmpegPath)) {
-        const probe = path.join(path.dirname(ffmpegPath), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
-        if (fs.existsSync(probe)) return probe;
-    }
-    return 'ffprobe';
-}
-
 async function getAudioDurationSeconds(filePath, settings: any = {}) {
-    const ffprobe = resolveFfprobePath(settings);
+    const { ffmpegPath, ffprobePath } = await resolveFfmpegTools(settings);
+    const ffprobe = ffprobePath;
     try {
         const result = await runProcess(ffprobe, [
             '-v', 'error',
@@ -57,7 +44,7 @@ async function getAudioDurationSeconds(filePath, settings: any = {}) {
     } catch (_err) {
     }
 
-    const ffmpeg = resolveFfmpegPath(settings);
+    const ffmpeg = ffmpegPath;
     const result = await runProcess(ffmpeg, ['-hide_banner', '-i', filePath, '-f', 'null', process.platform === 'win32' ? 'NUL' : '/dev/null'])
         .catch(err => ({ stdout: '', stderr: String(err.message || err) }));
     const match = String(result.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
@@ -205,7 +192,8 @@ async function prepareAudioForTranscription(filePath, settings: any = {}) {
         return { audioPath: filePath, enabled: false, silenceTrimmed: false, cleanup: () => {} };
     }
 
-    const ffmpeg = resolveFfmpegPath(settings);
+    const { ffmpegPath } = await resolveFfmpegTools(settings);
+    const ffmpeg = ffmpegPath;
     const thresholdDb = Number(settings.thresholdDb ?? -35);
     const minSilenceSec = Number(settings.minSilenceSec ?? 1);
     const paddingSec = Number(settings.paddingSec ?? 0.2);

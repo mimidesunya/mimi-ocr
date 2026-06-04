@@ -14,6 +14,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const pdfPagesRow     = document.getElementById('pdfPagesRow') as HTMLElement;
     const pdfPagesFileList = document.getElementById('pdfPagesFileList') as HTMLElement;
     const pdfPagesRunBtn  = document.getElementById('pdfPagesRunBtn') as HTMLButtonElement;
+    const settingsBtn     = document.getElementById('settingsBtn') as HTMLButtonElement;
+    const apiHelpBtn      = document.getElementById('apiHelpBtn') as HTMLButtonElement;
+    const configModal     = document.getElementById('configModal') as HTMLElement;
+    const configCloseBtn  = document.getElementById('configCloseBtn') as HTMLButtonElement;
+    const configSaveBtn   = document.getElementById('configSaveBtn') as HTMLButtonElement;
+    const configReloadBtn = document.getElementById('configReloadBtn') as HTMLButtonElement;
+    const configStatus    = document.getElementById('configStatus') as HTMLElement;
+    const configPathLabel = document.getElementById('configPathLabel') as HTMLElement;
+    const configTabBtns   = document.querySelectorAll<HTMLElement>('[data-config-tab]');
+    const configSettingsPane = document.getElementById('configSettingsPane') as HTMLElement;
+    const configKeysPane     = document.getElementById('configKeysPane') as HTMLElement;
 
     const ocrBtns      = document.querySelectorAll<HTMLElement>('[data-ocr-mode]');
     const aiBtns       = document.querySelectorAll<HTMLElement>('[data-ai]');
@@ -67,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let selectedPdfPageFiles: string[] = [];
     let pdfPageRanges: Record<string, string> = {};
     let draggedPdfPageIndex: number | null = null;
+    let loadedConfig: any = null;
     const GUI_STATE_KEY = 'mimi-ocr-gui-state-v1';
 
     const isOcrTool = (key: string) => key === 'ocr';
@@ -82,6 +94,217 @@ document.addEventListener('DOMContentLoaded', () => {
         'deblank':     'OCR結果をもとに白紙ページを除去したPDFとMDを生成',
         'pdf_pages':   'OCR結果をもとにPDFページを抽出・結合・2面割付'
     };
+
+    function inputValue(id: string) {
+        return (document.getElementById(id) as HTMLInputElement).value.trim();
+    }
+
+    function setInputValue(id: string, value: any) {
+        (document.getElementById(id) as HTMLInputElement).value = String(value ?? '');
+    }
+
+    function checkedValue(id: string) {
+        return (document.getElementById(id) as HTMLInputElement).checked;
+    }
+
+    function setCheckedValue(id: string, value: any) {
+        (document.getElementById(id) as HTMLInputElement).checked = value === true;
+    }
+
+    function selectValue(id: string) {
+        return (document.getElementById(id) as HTMLSelectElement).value;
+    }
+
+    function setSelectValue(id: string, value: any, fallback: string) {
+        const select = document.getElementById(id) as HTMLSelectElement;
+        const next = String(value || fallback);
+        select.value = Array.from(select.options).some(option => option.value === next) ? next : fallback;
+    }
+
+    function positiveInt(value: any, fallback: number, min = 1, max = 999) {
+        const parsed = Number.parseInt(String(value || ''), 10);
+        if (!Number.isFinite(parsed) || parsed < min) return fallback;
+        return Math.min(parsed, max);
+    }
+
+    function setConfigStatus(message: string, type: 'normal' | 'success' | 'error' = 'normal') {
+        configStatus.textContent = message;
+        configStatus.classList.toggle('success', type === 'success');
+        configStatus.classList.toggle('error', type === 'error');
+    }
+
+    function showConfigTab(tab: string) {
+        const selected = tab === 'keys' ? 'keys' : 'settings';
+        configTabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.configTab === selected));
+        configSettingsPane.classList.toggle('hidden', selected !== 'settings');
+        configKeysPane.classList.toggle('hidden', selected !== 'keys');
+    }
+
+    function populateConfigForm(config: any) {
+        const providers = config?.providers || {};
+        const gemini = providers.gemini || {};
+        const openai = providers.openai || {};
+        const claude = providers.claude || {};
+        const ocr = config?.ocr || {};
+        const transcription = config?.transcription || {};
+        const silenceTrim = transcription.silenceTrim || {};
+        const ndlocrLite = config?.tools?.ndlocrLite || {};
+
+        setInputValue('cfgGeminiApiKey', gemini.apiKey || '');
+        setInputValue('cfgGeminiChatModel', gemini.chatModel || 'gemini-2.5-flash-preview');
+        setInputValue('cfgGeminiTranscriptionModel', gemini.transcriptionModel || 'gemini-3.5-flash');
+        setInputValue('cfgOpenaiApiKey', openai.apiKey || '');
+        setInputValue('cfgOpenaiChatModel', openai.chatModel || 'gpt-4o');
+        setInputValue('cfgOpenaiTranscriptionModel', openai.transcriptionModel || 'gpt-4o-transcribe-diarize');
+        setInputValue('cfgClaudeApiKey', claude.apiKey || '');
+        setInputValue('cfgClaudeChatModel', claude.chatModel || 'claude-opus-4-6');
+
+        setSelectValue('cfgOcrProvider', ocr.provider, 'gemini');
+        setSelectValue('cfgOcrTarget', ocr.target, 'general');
+        setSelectValue('cfgOcrMode', ocr.mode, 'sync');
+        setInputValue('cfgOcrBatchSize', positiveInt(ocr.batchSize, 4, 1, 20));
+        setCheckedValue('cfgPreferPdfText', ocr.preferPdfText);
+        setCheckedValue('cfgAutoRename', ocr.autoRename);
+        setCheckedValue('cfgSkipFormattedRename', ocr.skipFormattedRename);
+
+        setSelectValue('cfgTranscriptionProvider', transcription.provider, 'gemini');
+        setSelectValue('cfgTranscriptionMode', transcription.mode, 'sync');
+        setInputValue('cfgTranscriptionBatchSize', positiveInt(transcription.batchSize, 4, 1, 20));
+        setCheckedValue('cfgSilenceTrim', silenceTrim.enabled);
+
+        setInputValue('cfgNdlocrParallelJobs', ndlocrLite.parallelJobs || 'auto');
+        setInputValue('cfgNdlocrPageChunkSize', positiveInt(ndlocrLite.pageChunkSize, 8, 1, 200));
+        setInputValue('cfgNdlocrImageDpi', positiveInt(ndlocrLite.imageDpi, 300, 72, 600));
+    }
+
+    function readConfigForm() {
+        const previous = loadedConfig && typeof loadedConfig === 'object' ? loadedConfig : {};
+        const previousTranscription = previous.transcription || {};
+        const previousSilenceTrim = previousTranscription.silenceTrim || {};
+
+        const config = {
+            providers: {
+                gemini: {
+                    apiKey: inputValue('cfgGeminiApiKey'),
+                    chatModel: inputValue('cfgGeminiChatModel') || 'gemini-2.5-flash-preview',
+                    transcriptionModel: inputValue('cfgGeminiTranscriptionModel') || 'gemini-3.5-flash',
+                },
+                openai: {
+                    apiKey: inputValue('cfgOpenaiApiKey'),
+                    chatModel: inputValue('cfgOpenaiChatModel') || 'gpt-4o',
+                    transcriptionModel: inputValue('cfgOpenaiTranscriptionModel') || 'gpt-4o-transcribe-diarize',
+                },
+                claude: {
+                    apiKey: inputValue('cfgClaudeApiKey'),
+                    chatModel: inputValue('cfgClaudeChatModel') || 'claude-opus-4-6',
+                },
+            },
+            ocr: {
+                provider: selectValue('cfgOcrProvider'),
+                target: selectValue('cfgOcrTarget'),
+                mode: selectValue('cfgOcrMode'),
+                batchSize: positiveInt(inputValue('cfgOcrBatchSize'), 4, 1, 20),
+                preferPdfText: checkedValue('cfgPreferPdfText'),
+                autoRename: checkedValue('cfgAutoRename'),
+                skipFormattedRename: checkedValue('cfgSkipFormattedRename'),
+            },
+            transcription: {
+                provider: selectValue('cfgTranscriptionProvider'),
+                language: previousTranscription.language || 'ja',
+                target: previousTranscription.target || selectValue('cfgOcrTarget') || 'general',
+                mode: selectValue('cfgTranscriptionMode'),
+                batchSize: positiveInt(inputValue('cfgTranscriptionBatchSize'), 4, 1, 20),
+                autoRename: previousTranscription.autoRename === true,
+                skipFormattedRename: previousTranscription.skipFormattedRename === true,
+                silenceTrim: {
+                    enabled: checkedValue('cfgSilenceTrim'),
+                    thresholdDb: Number(previousSilenceTrim.thresholdDb ?? -35),
+                    minSilenceSec: Number(previousSilenceTrim.minSilenceSec ?? 1),
+                    paddingSec: Number(previousSilenceTrim.paddingSec ?? 0.2),
+                    outputFormat: previousSilenceTrim.outputFormat || 'm4a',
+                    outputBitrate: previousSilenceTrim.outputBitrate || '96k',
+                },
+            },
+            tools: {
+                ndlocrLite: {
+                    parallelJobs: inputValue('cfgNdlocrParallelJobs') || 'auto',
+                    pageChunkSize: positiveInt(inputValue('cfgNdlocrPageChunkSize'), 8, 1, 200),
+                    imageDpi: positiveInt(inputValue('cfgNdlocrImageDpi'), 300, 72, 600),
+                },
+            },
+        };
+
+        loadedConfig = config;
+        return config;
+    }
+
+    async function loadConfigIntoModal() {
+        setConfigStatus('読み込み中...');
+        try {
+            const result = await (window as any).electronAPI.loadConfig();
+            loadedConfig = result.config || {};
+            configPathLabel.textContent = result.path || '';
+            populateConfigForm(loadedConfig);
+            setConfigStatus(result.exists ? '読み込みました。' : 'config.json は未作成です。保存すると作成します。', 'success');
+        } catch (err: any) {
+            setConfigStatus(`読み込みに失敗しました: ${err.message}`, 'error');
+        }
+    }
+
+    async function saveConfigFromModal() {
+        setConfigStatus('保存中...');
+        try {
+            const config = readConfigForm();
+            const result = await (window as any).electronAPI.saveConfig(config);
+            configPathLabel.textContent = result.path || configPathLabel.textContent;
+            setConfigStatus('保存しました。次の実行から反映されます。', 'success');
+            log('config.json を保存しました。', 'success');
+        } catch (err: any) {
+            setConfigStatus(`保存に失敗しました: ${err.message}`, 'error');
+        }
+    }
+
+    async function openConfigModal(tab: 'settings' | 'keys' = 'settings') {
+        configModal.classList.remove('hidden');
+        showConfigTab(tab);
+        if (!loadedConfig) await loadConfigIntoModal();
+    }
+
+    function closeConfigModal() {
+        configModal.classList.add('hidden');
+    }
+
+    settingsBtn.addEventListener('click', () => {
+        openConfigModal('settings');
+    });
+
+    apiHelpBtn.addEventListener('click', () => {
+        openConfigModal('keys');
+    });
+
+    configCloseBtn.addEventListener('click', closeConfigModal);
+    configSaveBtn.addEventListener('click', saveConfigFromModal);
+    configReloadBtn.addEventListener('click', loadConfigIntoModal);
+
+    configModal.addEventListener('click', (event) => {
+        if (event.target === configModal) closeConfigModal();
+    });
+
+    configTabBtns.forEach(btn => {
+        btn.addEventListener('click', () => showConfigTab(btn.dataset.configTab || 'settings'));
+    });
+
+    configModal.addEventListener('click', async (event) => {
+        const target = event.target as HTMLElement;
+        const button = target.closest('[data-open-url]') as HTMLElement | null;
+        if (!button) return;
+        const url = button.dataset.openUrl || '';
+        try {
+            await (window as any).electronAPI.openExternalUrl(url);
+        } catch (err: any) {
+            setConfigStatus(`リンクを開けませんでした: ${err.message}`, 'error');
+        }
+    });
 
     // ---- ツール選択 ----
     function selectTool(script: ScriptKey, card: HTMLElement) {

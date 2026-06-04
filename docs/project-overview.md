@@ -90,7 +90,7 @@ OCR 直後の Markdown 末尾には、`<!-- mimi-ocr-settings ... -->` 形式の
 
 - CLI: `npm run ocr`, `npm run merge`, `npm run split`, `npm run deblank`, `npm run pdf-pages`
 - GUI: `npm run gui`
-- Windowsランチャー: `npm run build:launcher` で `bin/mimi-ocr.exe` を生成
+- Windowsランチャー: `platforms/windows/launcher/`。`npm run build:launcher` で `bin/mimi-ocr.exe` を生成
 
 ## 想定ワークフロー
 

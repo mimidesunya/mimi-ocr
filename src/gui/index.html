@@ -60,6 +60,28 @@
             letter-spacing: 3px;
         }
 
+        .header-actions {
+            margin-top: 8px;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            -webkit-app-region: no-drag;
+        }
+
+        .header-btn {
+            border: 1px solid rgba(100, 181, 246, 0.42);
+            border-radius: 4px;
+            background: rgba(100, 181, 246, 0.1);
+            color: var(--accent-color);
+            font-size: 0.72rem;
+            line-height: 1;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .header-btn:hover { background: rgba(100, 181, 246, 0.2); }
+
         /* ツール選択グリッド */
         .tools-grid {
             display: grid;
@@ -395,6 +417,205 @@
             background: rgba(255, 255, 255, 0.06);
             margin: 2px 20px 6px;
         }
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.58);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 14px;
+            z-index: 10;
+        }
+
+        .modal-backdrop.hidden { display: none; }
+
+        .modal {
+            width: min(720px, 100%);
+            max-height: calc(100vh - 28px);
+            background: rgba(25, 30, 38, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+            overflow: hidden;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .modal-title {
+            font-size: 0.95rem;
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            width: 28px;
+            height: 28px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--secondary-text-color);
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .modal-close:hover { color: #fff; border-color: var(--accent-color); }
+
+        .modal-tabs {
+            display: flex;
+            gap: 6px;
+            padding: 10px 14px 0;
+        }
+
+        .modal-tab {
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 4px 4px 0 0;
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--secondary-text-color);
+            padding: 7px 10px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .modal-tab.active {
+            color: #fff;
+            border-color: var(--accent-color);
+            background: rgba(100, 181, 246, 0.18);
+        }
+
+        .modal-body {
+            padding: 12px 14px;
+            overflow-y: auto;
+        }
+
+        .modal-pane.hidden { display: none; }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 130px minmax(0, 1fr);
+            gap: 8px 10px;
+            align-items: center;
+        }
+
+        .settings-section-title {
+            grid-column: 1 / -1;
+            margin-top: 8px;
+            color: var(--accent-color);
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+
+        .settings-input,
+        .settings-select {
+            width: 100%;
+            min-width: 0;
+            padding: 7px 8px;
+            font-size: 0.76rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            color: var(--text-color);
+            outline: none;
+            font-family: inherit;
+            user-select: text;
+        }
+
+        .settings-input:focus,
+        .settings-select:focus { border-color: var(--accent-color); }
+
+        .settings-check-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .settings-check {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--secondary-text-color);
+            font-size: 0.76rem;
+        }
+
+        .settings-note {
+            grid-column: 1 / -1;
+            color: var(--secondary-text-color);
+            font-size: 0.72rem;
+            line-height: 1.55;
+            user-select: text;
+        }
+
+        .settings-path {
+            color: var(--secondary-text-color);
+            font-size: 0.72rem;
+            overflow-wrap: anywhere;
+            user-select: text;
+        }
+
+        .help-card {
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.18);
+            margin-bottom: 10px;
+        }
+
+        .help-card h3 {
+            margin: 0 0 8px;
+            font-size: 0.86rem;
+            color: #fff;
+        }
+
+        .help-card ol {
+            margin: 0 0 8px 20px;
+            padding: 0;
+            color: var(--secondary-text-color);
+            font-size: 0.76rem;
+            line-height: 1.6;
+            user-select: text;
+        }
+
+        .help-card li { margin-bottom: 4px; }
+
+        .help-link-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .settings-status {
+            color: var(--secondary-text-color);
+            font-size: 0.72rem;
+            min-width: 0;
+        }
+
+        .settings-status.error { color: var(--error-color); }
+        .settings-status.success { color: var(--success-color); }
     </style>
 </head>
 
@@ -403,6 +624,10 @@
         <!-- ヘッダー -->
         <div class="header">
             <h1>MIMI OCR</h1>
+            <div class="header-actions">
+                <button class="header-btn" id="settingsBtn" type="button">設定</button>
+                <button class="header-btn" id="apiHelpBtn" type="button">APIキー</button>
+            </div>
         </div>
 
         <!-- ツール選択 -->
@@ -586,6 +811,150 @@
         <!-- コンソール出力 -->
         <div class="console-container" id="consoleOutput">
             <div class="log-line">準備完了。ツールを選択してファイルをドロップしてください。</div>
+        </div>
+
+        <div class="modal-backdrop hidden" id="configModal">
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="configModalTitle">
+                <div class="modal-header">
+                    <div class="modal-title" id="configModalTitle">設定</div>
+                    <button class="modal-close" id="configCloseBtn" type="button" title="閉じる">×</button>
+                </div>
+                <div class="modal-tabs">
+                    <button class="modal-tab active" type="button" data-config-tab="settings">config.json</button>
+                    <button class="modal-tab" type="button" data-config-tab="keys">APIキーの取り方</button>
+                </div>
+                <div class="modal-body">
+                    <div class="modal-pane" id="configSettingsPane">
+                        <div class="settings-grid">
+                            <div class="settings-note">保存先: <span class="settings-path" id="configPathLabel"></span></div>
+
+                            <div class="settings-section-title">Gemini</div>
+                            <label class="option-label" for="cfgGeminiApiKey">APIキー</label>
+                            <input class="settings-input" id="cfgGeminiApiKey" type="password" autocomplete="off" placeholder="AIza...">
+                            <label class="option-label" for="cfgGeminiChatModel">OCRモデル</label>
+                            <input class="settings-input" id="cfgGeminiChatModel" type="text" placeholder="gemini-2.5-flash-preview">
+                            <label class="option-label" for="cfgGeminiTranscriptionModel">音声モデル</label>
+                            <input class="settings-input" id="cfgGeminiTranscriptionModel" type="text" placeholder="gemini-3.5-flash">
+
+                            <div class="settings-section-title">OpenAI</div>
+                            <label class="option-label" for="cfgOpenaiApiKey">APIキー</label>
+                            <input class="settings-input" id="cfgOpenaiApiKey" type="password" autocomplete="off" placeholder="sk-...">
+                            <label class="option-label" for="cfgOpenaiChatModel">OCRモデル</label>
+                            <input class="settings-input" id="cfgOpenaiChatModel" type="text" placeholder="gpt-4o">
+                            <label class="option-label" for="cfgOpenaiTranscriptionModel">音声モデル</label>
+                            <input class="settings-input" id="cfgOpenaiTranscriptionModel" type="text" placeholder="gpt-4o-transcribe-diarize">
+
+                            <div class="settings-section-title">Claude</div>
+                            <label class="option-label" for="cfgClaudeApiKey">APIキー</label>
+                            <input class="settings-input" id="cfgClaudeApiKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+                            <label class="option-label" for="cfgClaudeChatModel">OCRモデル</label>
+                            <input class="settings-input" id="cfgClaudeChatModel" type="text" placeholder="claude-opus-4-6">
+
+                            <div class="settings-section-title">OCRの既定値</div>
+                            <label class="option-label" for="cfgOcrProvider">AI</label>
+                            <select class="settings-select" id="cfgOcrProvider">
+                                <option value="gemini">Gemini</option>
+                                <option value="openai">OpenAI</option>
+                                <option value="claude">Claude</option>
+                            </select>
+                            <label class="option-label" for="cfgOcrTarget">出力</label>
+                            <select class="settings-select" id="cfgOcrTarget">
+                                <option value="general">一般</option>
+                                <option value="houhi">法匪</option>
+                            </select>
+                            <label class="option-label" for="cfgOcrMode">処理</label>
+                            <select class="settings-select" id="cfgOcrMode">
+                                <option value="sync">同期</option>
+                                <option value="batch">バッチ</option>
+                            </select>
+                            <label class="option-label" for="cfgOcrBatchSize">バッチサイズ</label>
+                            <input class="settings-input" id="cfgOcrBatchSize" type="number" min="1" max="20" value="4">
+                            <span class="option-label">その他</span>
+                            <div class="settings-check-row">
+                                <label class="settings-check"><input id="cfgPreferPdfText" type="checkbox"> PDFテキスト優先</label>
+                                <label class="settings-check"><input id="cfgAutoRename" type="checkbox"> 自動改名</label>
+                                <label class="settings-check"><input id="cfgSkipFormattedRename" type="checkbox"> 形式済みはスキップ</label>
+                            </div>
+
+                            <div class="settings-section-title">音声認識の既定値</div>
+                            <label class="option-label" for="cfgTranscriptionProvider">AI</label>
+                            <select class="settings-select" id="cfgTranscriptionProvider">
+                                <option value="gemini">Gemini</option>
+                                <option value="openai">OpenAI</option>
+                            </select>
+                            <label class="option-label" for="cfgTranscriptionMode">処理</label>
+                            <select class="settings-select" id="cfgTranscriptionMode">
+                                <option value="sync">同期</option>
+                                <option value="batch">バッチ</option>
+                            </select>
+                            <label class="option-label" for="cfgTranscriptionBatchSize">バッチサイズ</label>
+                            <input class="settings-input" id="cfgTranscriptionBatchSize" type="number" min="1" max="20" value="4">
+                            <span class="option-label">その他</span>
+                            <div class="settings-check-row">
+                                <label class="settings-check"><input id="cfgSilenceTrim" type="checkbox"> 無音カット</label>
+                            </div>
+
+                            <div class="settings-section-title">自動準備する外部ツール</div>
+                            <label class="option-label" for="cfgNdlocrParallelJobs">ndlocr並列数</label>
+                            <input class="settings-input" id="cfgNdlocrParallelJobs" type="text" placeholder="auto">
+                            <label class="option-label" for="cfgNdlocrPageChunkSize">ページ塊</label>
+                            <input class="settings-input" id="cfgNdlocrPageChunkSize" type="number" min="1" max="200" value="8">
+                            <label class="option-label" for="cfgNdlocrImageDpi">画像DPI</label>
+                            <input class="settings-input" id="cfgNdlocrImageDpi" type="number" min="72" max="600" value="300">
+                            <div class="settings-note">法匪テンプレートは同梱版を使います。ffmpeg と ndlocr-lite は、未設定なら初回使用時に .mimi-tools へ準備します。</div>
+                        </div>
+                    </div>
+                    <div class="modal-pane hidden" id="configKeysPane">
+                        <div class="help-card">
+                            <h3>Gemini</h3>
+                            <ol>
+                                <li>Google AI Studio を開きます。</li>
+                                <li>Googleアカウントでログインします。</li>
+                                <li>APIキーのページで「作成」または「Create API key」を押します。</li>
+                                <li>出てきた長い文字列をコピーして、設定の Gemini APIキーへ貼ります。</li>
+                            </ol>
+                            <div class="help-link-row">
+                                <button class="context-browse-btn" type="button" data-open-url="https://aistudio.google.com/app/apikey">APIキーを作る</button>
+                                <button class="context-browse-btn" type="button" data-open-url="https://ai.google.dev/gemini-api/docs/api-key?hl=ja">公式説明</button>
+                            </div>
+                        </div>
+                        <div class="help-card">
+                            <h3>OpenAI</h3>
+                            <ol>
+                                <li>OpenAI Platform を開きます。</li>
+                                <li>ログインして、API keys のページへ進みます。</li>
+                                <li>「Create new secret key」を押します。</li>
+                                <li>表示されたキーは一度しか見られません。すぐコピーして、設定の OpenAI APIキーへ貼ります。</li>
+                            </ol>
+                            <div class="help-link-row">
+                                <button class="context-browse-btn" type="button" data-open-url="https://platform.openai.com/api-keys">APIキーを作る</button>
+                                <button class="context-browse-btn" type="button" data-open-url="https://platform.openai.com/docs/quickstart/step-2-setup-your-api-key">公式説明</button>
+                            </div>
+                        </div>
+                        <div class="help-card">
+                            <h3>Claude</h3>
+                            <ol>
+                                <li>Anthropic Console を開きます。</li>
+                                <li>ログインして、API Keys のページへ進みます。</li>
+                                <li>「Create Key」を押します。</li>
+                                <li>出てきたキーをコピーして、設定の Claude APIキーへ貼ります。</li>
+                            </ol>
+                            <div class="help-link-row">
+                                <button class="context-browse-btn" type="button" data-open-url="https://console.anthropic.com/settings/keys">APIキーを作る</button>
+                                <button class="context-browse-btn" type="button" data-open-url="https://support.anthropic.com/en/articles/8114521-how-can-i-access-the-anthropic-api">公式説明</button>
+                            </div>
+                        </div>
+                        <div class="settings-note">APIキーは家の鍵のようなものです。SNS、チャット、GitHub、メールに貼らないでください。知らない人に使われると、自分に料金が来ることがあります。</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <div class="settings-status" id="configStatus"></div>
+                    <div class="modal-actions">
+                        <button class="context-browse-btn" id="configReloadBtn" type="button">再読込</button>
+                        <button class="context-browse-btn" id="configSaveBtn" type="button">保存</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="status-bar">

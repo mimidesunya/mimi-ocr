@@ -1,9 +1,102 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { findConfigPath } = require('../lib/gemini_client');
 
 // コンソールウィンドウの管理
 let consoleWindows = new Map();
+
+function findUpFile(fileName) {
+    const startDirs = [process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
+    const visited = new Set();
+
+    for (const startDir of startDirs) {
+        let currentDir = path.resolve(startDir);
+        while (!visited.has(currentDir)) {
+            visited.add(currentDir);
+            const candidate = path.join(currentDir, fileName);
+            if (fs.existsSync(candidate)) return candidate;
+            const parentDir = path.dirname(currentDir);
+            if (parentDir === currentDir) break;
+            currentDir = parentDir;
+        }
+    }
+
+    return null;
+}
+
+function getDefaultConfig() {
+    const templatePath = findUpFile('config.template.json');
+    if (templatePath) {
+        try {
+            return JSON.parse(fs.readFileSync(templatePath, 'utf-8'));
+        } catch (_err) {
+        }
+    }
+
+    return {
+        providers: {
+            gemini: { apiKey: '', chatModel: 'gemini-2.5-flash-preview', transcriptionModel: 'gemini-3.5-flash' },
+            openai: { apiKey: '', chatModel: 'gpt-4o', transcriptionModel: 'gpt-4o-transcribe-diarize' },
+            claude: { apiKey: '', chatModel: 'claude-opus-4-6' }
+        },
+        ocr: {
+            provider: 'gemini',
+            target: 'general',
+            mode: 'sync',
+            batchSize: 4,
+            preferPdfText: false,
+            autoRename: false,
+            skipFormattedRename: false
+        },
+        transcription: {
+            provider: 'gemini',
+            language: 'ja',
+            target: 'general',
+            mode: 'sync',
+            batchSize: 4,
+            autoRename: false,
+            skipFormattedRename: false,
+            silenceTrim: {
+                enabled: false,
+                thresholdDb: -35,
+                minSilenceSec: 1,
+                paddingSec: 0.2,
+                outputFormat: 'm4a',
+                outputBitrate: '96k'
+            }
+        },
+        tools: {
+            ndlocrLite: {
+                parallelJobs: 'auto',
+                pageChunkSize: 8,
+                imageDpi: 300
+            }
+        }
+    };
+}
+
+function getWritableConfigPath() {
+    const existing = findConfigPath();
+    if (existing) return existing;
+    const packagePath = findUpFile('package.json');
+    if (packagePath) return path.join(path.dirname(packagePath), 'config.json');
+    return path.join(process.cwd(), 'config.json');
+}
+
+function loadConfigForGui() {
+    const configPath = findConfigPath();
+    if (!configPath) {
+        return { path: getWritableConfigPath(), exists: false, config: getDefaultConfig() };
+    }
+
+    return {
+        path: configPath,
+        exists: true,
+        config: JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+    };
+}
 
 function createWindow() {
     const win = new BrowserWindow({
@@ -79,6 +172,40 @@ const SCRIPTS = {
     'deblank':     { path: 'src/remove_blank_pages.js', name: '白紙除去' },
     'pdf_pages':   { path: 'src/pdf_pages.js', name: 'PDFページ抽出・結合' }
 };
+
+ipcMain.handle('load-config', async () => {
+    try {
+        return { success: true, ...loadConfigForGui() };
+    } catch (err) {
+        return {
+            success: false,
+            path: getWritableConfigPath(),
+            exists: false,
+            config: getDefaultConfig(),
+            error: err.message || String(err)
+        };
+    }
+});
+
+ipcMain.handle('save-config', async (_event, config) => {
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+        throw new Error('設定データの形式が不正です');
+    }
+
+    const configPath = getWritableConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+    return { success: true, path: configPath };
+});
+
+ipcMain.handle('open-external-url', async (_event, url) => {
+    const parsed = new URL(String(url || ''));
+    if (parsed.protocol !== 'https:') {
+        throw new Error('https のリンクだけ開けます');
+    }
+    await shell.openExternal(parsed.toString());
+    return { success: true };
+});
 
 ipcMain.handle('execute-script', async (event, {
     scriptKey,

@@ -5,8 +5,9 @@
 - Windows x64 推奨
 - Node.js と npm
 - `npm install` が通るローカルビルド環境
-- `ndlocr-lite` を使う場合は Python と `ndlocr-lite` の別リポジトリ
-- `bin/mimi-ocr.exe` を作る場合は .NET 10 SDK
+- `ndlocr-lite` を使う場合は Python 3.10 以上
+- `bin/mimi-ocr.exe` を小さく作る場合は MinGW-w64 の `gcc` / `windres`
+- MinGW-w64 がない環境で `bin/mimi-ocr.exe` を作る場合は .NET 10 SDK
 
 ## 初回セットアップ
 
@@ -22,11 +23,11 @@ npm install
 Copy-Item config.template.json config.json
 ```
 
-`config.json` を開き、`providers` に使いたいプロバイダーのAPIキーやモデル名を設定してください。OCRと音声認識の既定値は、それぞれ `ocr` / `transcription` にまとめます。
+GUI上部の「設定」からAPIキーやモデル名を設定できます。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。CLI中心で使う場合は、`config.json` を直接編集してください。
 
-### 3. 必要なら `ndlocr-lite` を設定する
+### 3. 必要ツールについて
 
-`config.json` の `tools.ndlocrLite.repoPath` に、`ndlocr-lite` リポジトリの絶対パスを設定します。
+法匪モードは同梱テンプレートを使うため、追加設定は不要です。ffmpeg と ndlocr-lite は未設定なら初回使用時に `.mimi-tools/` へ自動準備します。既に手元のツールを使いたい場合だけ、`config.json` にパスを指定してください。
 
 ### 4. ビルドする
 
@@ -67,7 +68,9 @@ npm run build:launcher
 補足:
 
 - ランチャーは `npm run gui` を起動するだけなので、`node_modules` が存在する前提です。
-- `src/launcher/Launcher.csproj` は `net10.0-windows` / `win-x64` を対象にしています。
+- Windows 固有のランチャーソースは `platforms/windows/launcher/` にあります。
+- MinGW-w64 の `gcc` / `windres` が見つかる場合は、小さい Win32 ネイティブランチャーを生成します。
+- MinGW-w64 が見つからない場合は、`platforms/windows/launcher/Launcher.csproj` から .NET フレームワーク依存ランチャーを生成します。その場合は `bin/` に出る `mimi-ocr.dll` / `*.json` も同じ場所に置いたまま使ってください。
 - ランチャー自体の生成は `dist/src/lib/build_info.json` を更新しません。OCR実行用のビルド番号を更新したい場合は `npm run build` または `npm run gui` / `npm run ocr` を実行してください。
 
 ## セキュリティ注意

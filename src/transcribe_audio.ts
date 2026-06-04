@@ -25,6 +25,7 @@ const {
     parseTimestamp,
     formatTimestamp,
 } = require('./lib/audio_silence');
+const { resolveFfmpegTools } = require('./lib/tool_resolver');
 
 const SUPPORTED_AUDIO_EXTENSIONS = new Set([
     '.mp3',
@@ -313,8 +314,9 @@ async function fetchWithRetry(label: string, requestFactory: () => Promise<Respo
     throw new Error(`${label} failed after ${maxRetries} attempts: ${lastError?.message || String(lastError || 'unknown error')}`);
 }
 
-function getFfmpegPathForTranscription(options: TranscriptionOptions) {
-    return options.silenceTrim?.ffmpegPath || process.env.FFMPEG_PATH || 'ffmpeg';
+async function getFfmpegPathForTranscription(options: TranscriptionOptions) {
+    const { ffmpegPath } = await resolveFfmpegTools(options.silenceTrim || {});
+    return ffmpegPath;
 }
 
 function getChunkOutputBitrate(options: TranscriptionOptions) {
@@ -342,7 +344,7 @@ async function createGeminiAudioChunks(filePath: string, options: TranscriptionO
         return { chunks: [{ audioPath: filePath, startSec: 0, durationSec: 0, bytes: fileSize, temporary: false }], cleanup: () => {} };
     }
 
-    const ffmpeg = getFfmpegPathForTranscription(options);
+    const ffmpeg = await getFfmpegPathForTranscription(options);
     const outputBitrate = getChunkOutputBitrate(options);
     const chunkDurationSec = chooseGeminiChunkDuration(durationSec, fileSize);
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-ocr-audio-chunks-'));

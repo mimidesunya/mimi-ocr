@@ -63,14 +63,15 @@ Copy-Item config.template.json config.json
 
 原因:
 
-- `tools.ndlocrLite.repoPath` が未設定
-- 指定パスが存在しない
+- 自動取得がネットワークエラーで失敗した
+- Python 3.10 以上を起動できない
 - `src/ocr.py` が見つからない
 
 対処:
 
-- `config.json` の `tools.ndlocrLite.repoPath` を絶対パスで設定する
-- `pythonPath` で起動できる Python を確認する
+- `python --version` で Python 3.10 以上を起動できることを確認する
+- インターネット接続を確認して再実行する
+- `.mimi-tools/ndlocr-lite` が壊れている場合は、そのフォルダを削除して再実行する
 
 ## 既存ファイルがあるためスキップされる
 

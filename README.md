@@ -23,8 +23,9 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 - Windows x64 推奨
 - Node.js / npm
 - `npm install` が通るローカル環境
-- `ndlocr-lite` を使う場合は Python と別途 `ndlocr-lite` リポジトリ
-- EXE ビルドを行う場合は .NET 10 SDK
+- `ndlocr-lite` を使う場合は Python 3.10 以上
+- Windowsランチャーを小さく作る場合は MinGW-w64 の `gcc` / `windres`
+- MinGW-w64 がない環境で EXE ビルドを行う場合は .NET 10 SDK
 
 ## クイックスタート
 
@@ -40,7 +41,7 @@ npm install
 Copy-Item config.template.json config.json
 ```
 
-`config.json` に API キーとモデル名を設定してください。
+GUI上部の「設定」から API キーとモデル名を設定できます。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。
 
 ### 3. GUI を起動する
 
@@ -49,6 +50,8 @@ npm run gui
 ```
 
 ファイルをドラッグアンドドロップして OCR や音声認識を実行できます。
+
+法匪モードは同梱テンプレートを使います。ffmpeg と ndlocr-lite は未設定なら初回使用時に `.mimi-tools/` へ自動準備します。
 
 ## CLI の使い方
 
@@ -228,7 +231,7 @@ npm run build:launcher
 
 - `bin/mimi-ocr.exe`
 
-ランチャー EXE にはアイコンを設定済みです。
+ランチャー EXE にはアイコンを設定済みです。Windows固有のランチャーソースは `platforms/windows/launcher/` にあります。MinGW-w64 がある場合は小さい Win32 ネイティブ版を生成し、ない場合は .NET 版にフォールバックします。
 
 ## ドキュメント
 
