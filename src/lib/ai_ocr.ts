@@ -8,7 +8,7 @@ const GeminiBatchProcessor = require('./gemini_batch');
 const { ClaudeOcrProcessor } = require('./claude_client');
 const { OpenAIOcrProcessor } = require('./openai_client');
 const os = require('os');
-const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { loadPdfjsLib } = require('./pdfjs_loader');
 const { extractPdfPagesToImages } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
 const { getGeminiChatModel, getToolConfig, getProviderConfig } = require('./gemini_client');
@@ -766,6 +766,7 @@ async function extractEmbeddedTextFromPdfPages(pdfPath, pageNumbers) {
     const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
     const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
     const pdfBytes = fs.readFileSync(pdfPath);
+    const pdfjsLib = await loadPdfjsLib();
 
     const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdfBytes),
@@ -805,6 +806,50 @@ async function extractEmbeddedTextFromPdfPages(pdfPath, pageNumbers) {
     return result;
 }
 
+async function getPdfPageCount(pdfPath) {
+    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
+    const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
+    const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
+    const pdfBytes = fs.readFileSync(pdfPath);
+    const pdfjsLib = await loadPdfjsLib();
+
+    const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBytes),
+        standardFontDataUrl,
+        cMapUrl,
+        cMapPacked: true,
+        useSystemFonts: false,
+        disableFontFace: true,
+        useWorkerFetch: false,
+        isEvalSupported: false
+    });
+
+    let srcPdf = null;
+    try {
+        srcPdf = await loadingTask.promise;
+        return srcPdf.numPages;
+    } finally {
+        try {
+            if (srcPdf && typeof srcPdf.cleanup === 'function') {
+                srcPdf.cleanup();
+            }
+        } catch (_e) {
+        }
+        try {
+            if (srcPdf && typeof srcPdf.destroy === 'function') {
+                await srcPdf.destroy();
+            }
+        } catch (_e) {
+        }
+        try {
+            if (loadingTask && typeof loadingTask.destroy === 'function') {
+                await loadingTask.destroy();
+            }
+        } catch (_e) {
+        }
+    }
+}
+
 async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, contextInstruction = "", aiProvider = "gemini", processMode = "batch", useNdlocr = false, ndlocrOnly = false, preferPdfText = false, metadataOptions = {}) {
     if (ndlocrOnly) {
         useNdlocr = true;
@@ -822,8 +867,9 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
     console.log(`[情報] AIプロバイダー: ${aiProvider} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${useNdlocr ? (ndlocrOnly ? 'Only' : 'Pre-OCR') : 'Off'} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
     const pdfBuffer = await fsPromises.readFile(pdfPath);
-    const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
-    const totalPages = srcDoc.getPageCount();
+    const totalPages = await getPdfPageCount(pdfPath);
+    let srcDoc = null;
+    let pdfLibLoadFailed = false;
     
     const actualEndPage = endPage || totalPages;
     console.log(`[情報] 処理開始: ${pdfPath} (${totalPages} ページ中 ${startPage} から ${actualEndPage} ページまで)`);
@@ -1036,18 +1082,33 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 continue;
             }
 
-            const newDoc = await PDFDocument.create();
-            for (const pNum of batch) {
-                const [copiedPage] = await newDoc.copyPages(srcDoc, [pNum - 1]);
-                newDoc.addPage(copiedPage);
-            }
-
-            const batchPdfBytes = await newDoc.save();
-
             if (aiProvider === 'gemini' && processMode === 'sync') {
                 console.log(`[同期] Gemini PDF直読み回避: ページ ${batch.join(',')} を画像化してOCRします`);
                 requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction));
             } else {
+                if (!srcDoc && !pdfLibLoadFailed) {
+                    try {
+                        srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+                    } catch (e) {
+                        pdfLibLoadFailed = true;
+                        console.warn(`[警告] PDFの部分切り出しに失敗したため、ページ画像化でOCRします: ${e.message}`);
+                    }
+                }
+
+                if (!srcDoc) {
+                    console.log(`[情報] ページ ${batch.join(',')} を画像化してOCRします`);
+                    requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction));
+                    batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch });
+                    continue;
+                }
+
+                const newDoc = await PDFDocument.create();
+                for (const pNum of batch) {
+                    const [copiedPage] = await newDoc.copyPages(srcDoc, [pNum - 1]);
+                    newDoc.addPage(copiedPage);
+                }
+
+                const batchPdfBytes = await newDoc.save();
                 requests.push(createOcrRequest(Buffer.from(batchPdfBytes), batch.length, contextInstruction));
             }
             

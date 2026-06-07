@@ -16,16 +16,17 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 - 先頭4ページと末尾4ページを使った AI 自動ファイル名変更
 - OCR 結果に基づく文書分割（JSON 定義で複数ファイルに分割）
 - OCR 結果に基づくブランクページ除去（白紙ページを除いた PDF + MD ペアを生成）
-- Windows 用ランチャー EXE の生成
+- Windows / Mac 用ランチャーの生成
 
 ## 動作環境
 
-- Windows x64 推奨
+- Windows x64 / macOS 推奨
 - Node.js / npm
 - `npm install` が通るローカル環境
 - `ndlocr-lite` を使う場合は Python 3.10 以上
+- macOS で無音カットや音声変換を使う場合は ffmpeg（例: `brew install ffmpeg`）
 - Windowsランチャーを小さく作る場合は MinGW-w64 の `gcc` / `windres`
-- MinGW-w64 がない環境で EXE ビルドを行う場合は .NET 10 SDK
+- MinGW-w64 がない環境で Windows EXE ビルドを行う場合は .NET 10 SDK
 
 ## クイックスタート
 
@@ -51,7 +52,7 @@ npm run gui
 
 ファイルをドラッグアンドドロップして OCR や音声認識を実行できます。
 
-法匪モードは同梱テンプレートを使います。ffmpeg と ndlocr-lite は未設定なら初回使用時に `.mimi-tools/` へ自動準備します。
+法匪モードは同梱テンプレートを使います。ndlocr-lite は未設定なら初回使用時に `.mimi-tools/` へ自動準備します。ffmpeg は Windows では自動準備し、macOS では Homebrew などで入れたものを使います。
 
 ## CLI の使い方
 
@@ -221,17 +222,22 @@ OCR 直後の Markdown 末尾には、HTMLコメントとして設定メタデ�
 
 通常の `npm run build` では、実行用の `dist/src/lib/build_info.json` も生成されます。このファイルの短いタイムスタンプ形式の `number` が、OCR結果末尾の `build` に記録されます。
 
-## EXE の生成
+## ランチャーの生成
 
 ```powershell
 npm run build:launcher
 ```
 
+実行した OS に応じて生成します。
+
 生成物:
 
 - `bin/mimi-ocr.exe`
+- `bin/MIMI OCR.app`
 
-ランチャー EXE にはアイコンを設定済みです。Windows固有のランチャーソースは `platforms/windows/launcher/` にあります。MinGW-w64 がある場合は小さい Win32 ネイティブ版を生成し、ない場合は .NET 版にフォールバックします。
+Windows だけを明示的に作る場合は `npm run build:launcher:windows`、Mac だけを作る場合は `npm run build:launcher:mac` を使います。
+
+ランチャーは `npm run gui` を起動する小型の起動用ファイルです。Windows ランチャー EXE にはアイコンを設定済みです。Windows固有のランチャーソースは `platforms/windows/launcher/` にあります。MinGW-w64 がある場合は小さい Win32 ネイティブ版を生成し、ない場合は .NET 版にフォールバックします。Mac 用は `platforms/macos/build_launcher.js` から `.app` バンドルを生成します。
 
 ## ドキュメント
 

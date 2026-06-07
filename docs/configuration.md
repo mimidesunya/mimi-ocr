@@ -114,7 +114,7 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 
 ### ffmpeg
 
-ffmpeg / ffprobe は `config.json` には書きません。PATH上の `ffmpeg` を探し、Windowsでは見つからなければ `.mimi-tools/ffmpeg` に自動取得します。
+ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffmpeg` を探し、Windowsでは見つからなければ `.mimi-tools/ffmpeg` に自動取得します。macOS では Homebrew などで入れた `ffmpeg` / `ffprobe` を使います。
 
 ### `tools.ndlocrLite`
 

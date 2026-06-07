@@ -23,8 +23,10 @@
 | `scripts/write_build_info.js` | ビルド時に `dist/src/lib/build_info.json` を生成 |
 | `src/gui/main.ts` | Electron メインプロセス。GUI からCLIを起動 |
 | `src/gui/renderer.ts` | フロントエンドの状態管理とイベント処理 |
+| `scripts/build_launcher.js` | 実行 OS に応じたランチャー生成スクリプトを呼び分け |
 | `platforms/windows/launcher/native_launcher.c` | Windows 用の小型ネイティブランチャー。`npm run gui` を起動 |
 | `platforms/windows/launcher/Launcher.cs` | MinGW-w64 がない場合の .NET フォールバックランチャー |
+| `platforms/macos/build_launcher.js` | Mac 用 `.app` バンドルランチャーを生成 |
 
 ## PDF 処理フロー
 

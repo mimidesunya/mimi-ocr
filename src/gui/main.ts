@@ -8,7 +8,7 @@ const { findConfigPath, findAppDefaultsPath, loadAppDefaults, loadUserConfig, lo
 let consoleWindows = new Map();
 
 function findUpFile(fileName) {
-    const startDirs = [process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
+    const startDirs = [process.env.MIMI_OCR_PROJECT_ROOT, process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
     const visited = new Set();
 
     for (const startDir of startDirs) {
@@ -24,6 +24,20 @@ function findUpFile(fileName) {
     }
 
     return null;
+}
+
+function getProjectRootForGui() {
+    const envProjectRoot = process.env.MIMI_OCR_PROJECT_ROOT;
+    if (envProjectRoot && fs.existsSync(path.join(envProjectRoot, 'package.json'))) {
+        return path.resolve(envProjectRoot);
+    }
+
+    const packagePath = findUpFile('package.json');
+    if (packagePath) {
+        return path.dirname(packagePath);
+    }
+
+    return path.resolve(__dirname, '../../');
 }
 
 function getDefaultConfig() {
@@ -60,9 +74,14 @@ function loadConfigForGui() {
 }
 
 function createWindow() {
+    const iconPath = process.platform === 'darwin' 
+        ? path.join(__dirname, '../../bin/MIMI OCR.app/Contents/Resources/app.icns')
+        : path.join(__dirname, '../../bin/MIMI OCR.app/Contents/Resources/app.icns');
+    
     const win = new BrowserWindow({
         width: 480,
         height: 760,
+        icon: fs.existsSync(iconPath) ? iconPath : undefined,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
@@ -83,9 +102,14 @@ function createWindow() {
 }
 
 function createConsoleWindow(taskName, fileCount) {
+    const iconPath = process.platform === 'darwin' 
+        ? path.join(__dirname, '../../bin/MIMI OCR.app/Contents/Resources/app.icns')
+        : path.join(__dirname, '../../bin/MIMI OCR.app/Contents/Resources/app.icns');
+    
     const consoleWin = new BrowserWindow({
         width: 800,
         height: 500,
+        icon: fs.existsSync(iconPath) ? iconPath : undefined,
         webPreferences: {
             preload: path.join(__dirname, 'console_preload.js'),
             nodeIntegration: false,
@@ -107,6 +131,9 @@ function createConsoleWindow(taskName, fileCount) {
 
     return consoleWin;
 }
+
+// アプリケーション名を設定（メニューバーのタイトルに表示）
+app.setName('MIMI OCR');
 
 app.whenReady().then(() => {
     createWindow();
@@ -190,7 +217,9 @@ ipcMain.handle('execute-script', async (event, {
     }
 
     const script = SCRIPTS[scriptKey];
-    const scriptPath = path.resolve(__dirname, '../../', script.path);
+    const scriptRoot = path.resolve(__dirname, '../../');
+    const projectRoot = getProjectRootForGui();
+    const scriptPath = path.resolve(scriptRoot, script.path);
 
     const isMerge = scriptKey === 'merge';
     const isSplit = scriptKey === 'split';
@@ -321,7 +350,7 @@ ipcMain.handle('execute-script', async (event, {
     // 実行コマンドをログに表示
     const cmdSummary = `node ${path.basename(scriptPath)} ${scriptArgs.filter(a => !filePaths.includes(a)).join(' ')} ...`;
     consoleWin.webContents.send('console-command', `実行コマンド: ${cmdSummary}`);
-    consoleWin.webContents.send('console-info', `作業ディレクトリ: ${path.resolve(__dirname, '../../')}`);
+    consoleWin.webContents.send('console-info', `作業ディレクトリ: ${projectRoot}`);
 
     if (isSplit) {
         consoleWin.webContents.send('console-info', '分割定義JSONに基づいてファイルを分割します');
@@ -357,10 +386,10 @@ ipcMain.handle('execute-script', async (event, {
 
     return new Promise((resolve) => {
         const childProcess = spawn('node', [scriptPath, ...scriptArgs], {
-            cwd: path.resolve(__dirname, '../../'),
+            cwd: projectRoot,
             shell: false,
             windowsHide: true,
-            env: { ...process.env }
+            env: { ...process.env, MIMI_OCR_PROJECT_ROOT: projectRoot }
         });
 
         let stdout = '';

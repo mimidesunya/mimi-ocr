@@ -1,7 +1,6 @@
 # Node.js
 node_modules/
 dist/
-package-lock.json
 
 # アプリ設定（テンプレートのみ管理）
 config.json
@@ -15,6 +14,8 @@ platforms/windows/launcher/bin/
 platforms/windows/launcher/obj/
 bin/*
 !bin/mimi-ocr.exe
+!bin/MIMI OCR.app/
+!bin/MIMI OCR.app/**
 
 # .NET SDK
 .dotnet/

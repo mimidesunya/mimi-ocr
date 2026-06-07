@@ -30,6 +30,11 @@ function isExecutableFile(filePath) {
 
 function pathCandidates(commandName) {
     const pathDirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    if (process.platform === 'darwin') {
+        for (const dir of ['/opt/homebrew/bin', '/usr/local/bin']) {
+            if (!pathDirs.includes(dir)) pathDirs.push(dir);
+        }
+    }
     const extensions = process.platform === 'win32'
         ? String(process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
         : [''];
@@ -223,7 +228,11 @@ async function resolveFfmpegTools(settings: any = {}) {
         return await ensureWindowsFfmpeg();
     }
 
-    return { ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' };
+    if (process.platform === 'darwin') {
+        throw new Error('ffmpeg が見つかりません。Mac では Homebrew などで ffmpeg をインストールしてください: brew install ffmpeg');
+    }
+
+    throw new Error('ffmpeg が見つかりません。PATH 上に ffmpeg と ffprobe をインストールしてください。');
 }
 
 function stripFirstPathPart(entryName) {
@@ -299,7 +308,7 @@ function ensureNdlocrVenv(repoPath, basePython) {
 
 async function resolveNdlocrLite(settings: any = {}) {
     const configuredRepo = String(settings.repoPath || '').trim();
-    const configuredPython = String(settings.pythonPath || '').trim() || 'python';
+    const configuredPython = String(settings.pythonPath || '').trim() || (process.platform === 'win32' ? 'python' : 'python3');
 
     if (configuredRepo && fs.existsSync(path.join(configuredRepo, 'src', 'ocr.py'))) {
         return { repoPath: configuredRepo, pythonPath: configuredPython };

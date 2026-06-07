@@ -43,7 +43,8 @@ const FALLBACK_APP_DEFAULTS = {
 };
 
 function findUpFile(fileName) {
-    const startDirs = [process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
+    const envProjectRoot = process.env.MIMI_OCR_PROJECT_ROOT;
+    const startDirs = [envProjectRoot, process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
     const visited = new Set();
 
     for (const startDir of startDirs) {
@@ -105,6 +106,14 @@ function mergeConfig(base, override) {
 }
 
 function getProjectRoot() {
+    const envProjectRoot = process.env.MIMI_OCR_PROJECT_ROOT;
+    if (envProjectRoot) {
+        const resolved = path.resolve(envProjectRoot);
+        if (fs.existsSync(path.join(resolved, 'package.json')) || fs.existsSync(path.join(resolved, 'app.defaults.json'))) {
+            return resolved;
+        }
+    }
+
     const configPath = findConfigPath();
     if (configPath) {
         return path.dirname(configPath);

@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+show_dialog() {
+  /usr/bin/osascript \
+    -e 'on run argv' \
+    -e 'display dialog item 2 of argv buttons {"OK"} default button "OK" with title item 1 of argv' \
+    -e 'end run' \
+    -- "$1" "$2" >/dev/null 2>&1 || true
+}
+
+node_env_script='
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
+if [ -z "${NVM_DIR:-}" ]; then
+  export NVM_DIR="$HOME/.nvm"
+fi
+
+for nvm_script in "$NVM_DIR/nvm.sh" "$HOME/.nvm/nvm.sh" "/opt/homebrew/opt/nvm/nvm.sh" "/usr/local/opt/nvm/nvm.sh"; do
+  if [ -s "$nvm_script" ]; then
+    . "$nvm_script"
+    break
+  fi
+done
+
+if command -v nvm >/dev/null 2>&1 && [ -n "${MIMI_OCR_PROJECT_ROOT:-}" ] && [ -f "$MIMI_OCR_PROJECT_ROOT/.nvmrc" ]; then
+  nvm use --silent "$(cat "$MIMI_OCR_PROJECT_ROOT/.nvmrc")" >/dev/null 2>&1 || true
+fi
+'
+
+launcher_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+project_root="$(CDPATH= cd -- "$launcher_dir/../../../.." && pwd)"
+
+if [ ! -d "$project_root/node_modules" ]; then
+  show_dialog "MIMI OCR - セットアップが必要です" "node_modules が見つかりません。
+初回起動前にプロジェクトフォルダで以下を実行してください:
+
+    npm install
+
+プロジェクトフォルダ:
+$project_root"
+  exit 1
+fi
+
+cd "$project_root" || {
+  show_dialog "MIMI OCR エラー" "プロジェクトフォルダを開けませんでした:
+$project_root"
+  exit 1
+}
+
+if ! MIMI_OCR_PROJECT_ROOT="$project_root" /bin/zsh -lc "$node_env_script command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1"; then
+  show_dialog "MIMI OCR エラー" "起動に失敗しました。
+
+npm と node がインストールされているか確認してください。"
+  exit 1
+fi
+
+MIMI_OCR_PROJECT_ROOT="$project_root" exec /bin/zsh -lc "$node_env_script cd \"\$MIMI_OCR_PROJECT_ROOT\" && npm run gui"

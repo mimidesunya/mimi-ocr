@@ -1,7 +1,14 @@
 const fs = require('fs');
 const path = require('path');
-const { createCanvas } = require('canvas');
-const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { createCanvas, DOMMatrix, ImageData } = require('canvas');
+const { loadPdfjsLib } = require('./pdfjs_loader');
+
+if (typeof globalThis.DOMMatrix === 'undefined' && DOMMatrix) {
+    globalThis.DOMMatrix = DOMMatrix;
+}
+if (typeof globalThis.ImageData === 'undefined' && ImageData) {
+    globalThis.ImageData = ImageData;
+}
 
 class SafeCanvasFactory {
     create(width, height) {
@@ -123,6 +130,7 @@ async function extractPdfToImages(pdfPath, outputDir, dpi = 200, startPage = 1, 
     
     // 注意: パスに全角文字が含まれるのを防ぐため、出力先パスを確認するか呼び出し側で担保する
     const pdfBytes = fs.readFileSync(pdfPath);
+    const pdfjsLib = await loadPdfjsLib();
     
     const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdfBytes),
@@ -130,8 +138,8 @@ async function extractPdfToImages(pdfPath, outputDir, dpi = 200, startPage = 1, 
         cMapUrl,
         cMapPacked: true,
         CanvasFactory: SafeCanvasFactory,
-        useSystemFonts: false,
-        disableFontFace: true,
+        useSystemFonts: true,
+        disableFontFace: false,
         useWorkerFetch: false,
         isEvalSupported: false
     });
@@ -167,6 +175,7 @@ async function extractPdfPagesToImages(pdfPath, outputDir, dpi = 200, pageNumber
     const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
     const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
     const pdfBytes = fs.readFileSync(pdfPath);
+    const pdfjsLib = await loadPdfjsLib();
 
     const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdfBytes),
@@ -174,8 +183,8 @@ async function extractPdfPagesToImages(pdfPath, outputDir, dpi = 200, pageNumber
         cMapUrl,
         cMapPacked: true,
         CanvasFactory: SafeCanvasFactory,
-        useSystemFonts: false,
-        disableFontFace: true,
+        useSystemFonts: true,
+        disableFontFace: false,
         useWorkerFetch: false,
         isEvalSupported: false
     });
