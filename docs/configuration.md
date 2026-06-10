@@ -133,6 +133,21 @@ ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffm
 - `imageDpi` は既定で `300` です。大容量PDFでメモリ不足が出る場合は `200` 前後まで下げると安定しやすくなります。
 - 自動取得にはインターネット接続と Python 3.10 以上が必要です。
 
+### `tools.stitchEngine`
+
+分割スキャンPDFのページ復元で使うHuginと傾き補正の設定です。標準値は `app.defaults.json` にあります。
+
+| キー | 必須 | 説明 |
+| --- | --- | --- |
+| `imageDpi` | 任意 | `auto` または PDF 画像化の解像度（dpi）。`auto` は現在300dpiです |
+| `deskew` | 任意 | `auto` または `off`。`auto` ではHugin前後に水平/垂直特徴から小角度の傾きを補正します |
+| `pdfImageFormat` | 任意 | `jpeg` または `png`。復元PDF内に埋め込む画像形式です。既定は `jpeg` |
+| `jpegQuality` | 任意 | `0.1` から `0.98` のJPEG品質。既定は `0.86` |
+| `maxFallbackCandidates` | 任意 | 通常マッチングが弱い時に試す追加候補数。既定は `8`、最大は `32` |
+| `huginPath` | 任意 | Hugin の `bin` フォルダ、または `hugin_executor.exe` などの実行ファイルパス |
+
+Hugin が PATH にない Windows 環境では、通常 `huginPath` に `C:\Program Files\Hugin\bin` を指定します。`deskew: "auto"` は数度以内の傾きを対象にします。90度や180度の読み方向補正は行いません。`pdfImageFormat: "jpeg"` はスキャン画像PDFの肥大化を避けるための既定です。無劣化で残したい場合は `png` に変更できます。`maxFallbackCandidates` を増やすと特殊な回転候補も探せますが、重なりがないPDFでは失敗までの時間が延びます。
+
 ### 法匪テンプレート
 
 法匪モードは同梱テンプレート `src/templates/houhi_sample.md` を使うため、外部リポジトリ指定は不要です。

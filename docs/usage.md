@@ -6,9 +6,10 @@
 
 - `OCR`: 一般文書向け、またはオプションで法匪書式の Markdown を生成
 - `音声認識`: 音声ファイルを発言者分離つき Markdown または法匪向け反訳書に変換
-- `ページ結合`: `*_paged.md` のページ境界を整理
+- `MD結合`: `*_paged.md` のページ境界を整理
 - `文書分割`: JSON 定義に基づいて `_paged.md` と PDF を文書ごとに分割
 - `白紙除去`: OCR 結果をもとに白紙ページを除去した PDF + MD ペアを生成
+- `分割復元`: 分割スキャンPDFを重なり検出で結合
 - `PDF抽出`: OCR 結果をもとに PDF ページを抽出・結合・2面割付
 
 ### 画面オプション
@@ -27,8 +28,9 @@
 ### GUI 上の制約
 
 - ツールカードへ直接ファイルをドロップすると、そのツールに切り替わって処理します。
-- `ページ結合`・`文書分割`・`白紙除去` 選択時は OCR / 音声認識 関連オプションは無効になります。
+- `MD結合`・`文書分割`・`白紙除去` 選択時は OCR / 音声認識 関連オプションは無効になります。
 - `文書分割` 選択時は分割定義 JSON の入力欄が表示されます。
+- `分割復元` 選択時は、既定の自動判定のまま実行できます。必要な場合だけ分割枚数とDPIを指定できます。
 - `PDF抽出` 選択時は、先にPDFファイルをドロップまたは選択して登録します。その後、ファイルごとのページ指定を入力して `実行` を押します。
 - 登録されたPDFはファイル名順に並び、上下ボタン、削除ボタン、ドラッグで順番を変更できます。
 - `ndlocr-only` 選択時は AI と処理モード選択は無効になります。
@@ -184,6 +186,34 @@ OCR 結果を解析し、白紙ページを除去した PDF + MD ペアを生成
 npm run deblank -- .\samples\scanned.pdf
 npm run deblank -- .\samples\scanned.pdf --threshold 20
 ```
+
+### 分割スキャンPDFのページ復元
+
+A4スキャナで分割スキャンしたB4/A3などのページを、Huginで位置合わせして復元します。低解像度の重なり検出で、どの入力ページが同じ実ページに属するかを自動判定します。必要な場合は `--group-size` で固定枚数を指定できます。
+
+```powershell
+npm run stitch -- .\samples\b4_split_scan.pdf
+npm run stitch -- .\samples\b4_split_scan.pdf --group-size 2 --dpi 300
+npm run stitch -- .\samples\b4_split_scan.pdf --group-size 3
+npm run stitch -- .\samples\b4_split_scan.pdf --group-size 2 --keep-temp
+npm run stitch -- .\samples\b4_split_scan.pdf --deskew off
+npm run stitch -- .\samples\b4_split_scan.pdf --jpeg-quality 0.9
+npm run stitch -- .\samples\b4_split_scan.pdf --max-fallback-candidates 32
+```
+
+主なオプション:
+
+| オプション | 説明 |
+| --- | --- |
+| `--group-size auto\|<n>` | 何ページを1ページへ復元するか。既定は `auto`、重なり検出でページ組を自動判定します |
+| `--dpi auto\|<n>` | PDFを画像化するDPI。既定は `auto`、現在は出力用に300dpiを使います |
+| `--deskew auto\|off` | Hugin前後に水平/垂直特徴から小角度の傾きを補正します。既定は `auto` |
+| `--pdf-image-format jpeg\|png` | 復元PDF内の画像形式。既定は `jpeg` |
+| `--jpeg-quality <0.1-1.0>` | JPEG品質。既定は `0.86` |
+| `--max-fallback-candidates <n>` | 弱いマッチング時に試す追加候補数。既定は `8`、最大は `32` |
+| `--keep-temp` | 中間PNG、PTO、Hugin出力を残す |
+
+Hugin のインストールが必要です。`pto_gen`、`cpfind`、`autooptimiser`、`hugin_executor`、`nona` などが PATH にない場合は、`config.json` の `tools.stitchEngine.huginPath` に Hugin の `bin` フォルダ、または `hugin_executor.exe` のパスを指定してください。通常のマッチングが弱いページでは、端領域と回転候補を追加で試します。候補が弱い場合は重い最適化へ進まず、信頼できる重なりがないものとして失敗します。各画像に共通して写っている重なり領域が必要です。重なりがほとんどない隣接画像の合成には、別のレイアウト合成モードが必要です。完成ページの向き補正は行いません。出力PDFは既定でJPEG画像を埋め込み、肥大化を抑えます。出力は `*_stitched.pdf` と `*_stitch_report.json` です。
 
 ### PDFページ抽出・結合
 

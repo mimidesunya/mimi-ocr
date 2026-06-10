@@ -15,6 +15,7 @@
     "merge": "npm run build && node dist/src/merge_pages.js",
     "split": "npm run build && node dist/src/split_pages.js",
     "deblank": "npm run build && node dist/src/remove_blank_pages.js",
+    "stitch": "npm run build && node dist/src/stitch_pages.js",
     "pdf-pages": "npm run build && node dist/src/pdf_pages.js",
     "transcribe": "npm run build && node dist/src/transcribe_audio.js",
     "build:launcher": "node scripts/build_launcher.js",

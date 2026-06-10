@@ -155,10 +155,11 @@ app.on('window-all-closed', () => {
 const SCRIPTS = {
     'ocr':         { path: 'src/ocr.js', name: 'OCR' },
     'transcribe_audio': { path: 'src/transcribe_audio.js', name: '音声認識' },
-    'merge':       { path: 'src/merge_pages.js', name: 'ページ結合' },
+    'merge':       { path: 'src/merge_pages.js', name: 'MD結合' },
     'split':       { path: 'src/split_pages.js', name: '文書分割' },
     'deblank':     { path: 'src/remove_blank_pages.js', name: '白紙除去' },
-    'pdf_pages':   { path: 'src/pdf_pages.js', name: 'PDFページ抽出・結合' }
+    'stitch':      { path: 'src/stitch_pages.js', name: '分割復元' },
+    'pdf_pages':   { path: 'src/pdf_pages.js', name: 'PDF抽出' }
 };
 
 ipcMain.handle('load-config', async () => {
@@ -210,7 +211,8 @@ ipcMain.handle('execute-script', async (event, {
     silenceTrim,
     contextText,
     splitJson,
-    pdfPageOptions
+    pdfPageOptions,
+    stitchOptions
 }) => {
     if (!SCRIPTS[scriptKey]) {
         throw new Error('無効なスクリプトキーです');
@@ -224,6 +226,7 @@ ipcMain.handle('execute-script', async (event, {
     const isMerge = scriptKey === 'merge';
     const isSplit = scriptKey === 'split';
     const isDeblank = scriptKey === 'deblank';
+    const isStitch = scriptKey === 'stitch';
     const isPdfPages = scriptKey === 'pdf_pages';
     const isAudio = scriptKey === 'transcribe_audio';
     const selectedOcrMode = ocrMode || 'ai';
@@ -240,7 +243,7 @@ ipcMain.handle('execute-script', async (event, {
 
     let contextTempFile = null;
     const context = String(contextText || '').trim();
-    if ((isAudio || (!isMerge && !isDeblank && !isSplit && !isPdfPages)) && context) {
+    if ((isAudio || (!isMerge && !isDeblank && !isSplit && !isPdfPages && !isStitch)) && context) {
         const os = require('os');
         contextTempFile = path.join(os.tmpdir(), `mimi-ocr-context-${Date.now()}.txt`);
         require('fs').writeFileSync(contextTempFile, context, 'utf-8');
@@ -263,6 +266,16 @@ ipcMain.handle('execute-script', async (event, {
             scriptArgs.push('--two-up');
             scriptArgs.push('--direction', pdfPageOptions?.direction === 'rtl' ? 'rtl' : 'ltr');
         }
+    } else if (isStitch) {
+        const groupSizeRaw = String(stitchOptions?.groupSize || 'auto').trim();
+        const dpiRaw = String(stitchOptions?.dpi || 'auto').trim();
+        const groupSize = parseInt(groupSizeRaw, 10);
+        const dpi = parseInt(dpiRaw, 10);
+        scriptArgs.push('--group-size', groupSizeRaw === 'auto' ? 'auto' : String(!isNaN(groupSize) && groupSize >= 2 ? groupSize : 2));
+        scriptArgs.push('--dpi', dpiRaw === 'auto' ? 'auto' : String(!isNaN(dpi) && dpi >= 72 ? dpi : 300));
+        if (stitchOptions?.keepTemp) {
+            scriptArgs.push('--keep-temp');
+        }
     } else if (isAudio) {
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         const provider = audioOptions?.provider === 'gemini' ? 'gemini' : 'openai';
@@ -281,7 +294,7 @@ ipcMain.handle('execute-script', async (event, {
         if (contextTempFile) {
             scriptArgs.push(`--context-file=${contextTempFile}`);
         }
-    } else if (!isMerge && !isDeblank) {
+    } else if (!isMerge && !isDeblank && !isStitch) {
         // ターゲット（houhi / general）
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         scriptArgs.push('--target', target);
@@ -356,6 +369,8 @@ ipcMain.handle('execute-script', async (event, {
         consoleWin.webContents.send('console-info', '分割定義JSONに基づいてファイルを分割します');
     } else if (isDeblank) {
         consoleWin.webContents.send('console-info', 'OCR結果をもとに白紙ページを除去します');
+    } else if (isStitch) {
+        consoleWin.webContents.send('console-info', `分割スキャンを復元します: group-size=${stitchOptions?.groupSize || 'auto'} / dpi=${stitchOptions?.dpi || 'auto'}`);
     } else if (isPdfPages) {
         const pageTypeLabel = pdfPageOptions?.pageType === 'printed' ? '印刷ページ' : 'PDFページ';
         const twoUpLabel = pdfPageOptions?.twoUp
@@ -371,7 +386,7 @@ ipcMain.handle('execute-script', async (event, {
         const trimLabel = silenceTrim === true ? 'On' : 'Off';
         const contextLabel = context ? 'あり' : 'なし';
         consoleWin.webContents.send('console-info', `音声認識: ${target} / ${provider} / モデル: ${audioOptions?.model || '(既定)'} / モード: ${modeLabel} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel} / 無音カット: ${trimLabel} / コンテキスト: ${contextLabel}`);
-    } else if (!isMerge) {
+    } else if (!isMerge && !isStitch) {
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         const ocrLabel = ndlocrOnly ? 'ndlocr-only' : (useNdlocr ? 'ndlocr+AI' : 'AIのみ');
         const renameLabel = autoRename === false ? 'Off' : 'On';

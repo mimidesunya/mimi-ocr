@@ -38,6 +38,14 @@ const FALLBACK_APP_DEFAULTS = {
             parallelJobs: 'auto',
             pageChunkSize: 8,
             imageDpi: 300
+        },
+        stitchEngine: {
+            imageDpi: 'auto',
+            deskew: 'auto',
+            pdfImageFormat: 'jpeg',
+            jpegQuality: 0.86,
+            maxFallbackCandidates: 8,
+            huginPath: ''
         }
     }
 };

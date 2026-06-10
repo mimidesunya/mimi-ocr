@@ -15,6 +15,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const pdfPagesRow     = document.getElementById('pdfPagesRow') as HTMLElement;
     const pdfPagesFileList = document.getElementById('pdfPagesFileList') as HTMLElement;
     const pdfPagesRunBtn  = document.getElementById('pdfPagesRunBtn') as HTMLButtonElement;
+    const stitchRow       = document.getElementById('stitchRow') as HTMLElement;
+    const stitchGroupSizeInput = document.getElementById('stitchGroupSizeInput') as HTMLInputElement;
+    const stitchDpiInput  = document.getElementById('stitchDpiInput') as HTMLInputElement;
     const settingsBtn     = document.getElementById('settingsBtn') as HTMLButtonElement;
     const apiHelpBtn      = document.getElementById('apiHelpBtn') as HTMLButtonElement;
     const configModal     = document.getElementById('configModal') as HTMLElement;
@@ -67,7 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const labelBatch   = document.getElementById('labelBatch') as HTMLElement;
 
     // ---- 状態 ----
-    type ScriptKey = 'ocr' | 'transcribe_audio' | 'merge' | 'split' | 'deblank' | 'pdf_pages';
+    type ScriptKey = 'ocr' | 'transcribe_audio' | 'merge' | 'split' | 'deblank' | 'stitch' | 'pdf_pages';
     type OcrTarget = 'general' | 'houhi';
     let currentScript: ScriptKey = 'ocr';
     let currentOcrTarget: OcrTarget = 'general';
@@ -93,14 +96,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const isOcrTool = (key: string) => key === 'ocr';
     const isAudioTool = (key: string) => key === 'transcribe_audio';
     const isPdfPagesTool = (key: string) => key === 'pdf_pages';
+    const isStitchTool = (key: string) => key === 'stitch';
 
     // ツール説明（ホバー表示）
     const toolDescriptions: Record<string, string> = {
         'ocr':         'PDF / Word / ODT / PPTX / 画像をOCR処理',
         'transcribe_audio': '音声を発言者分離つきでMarkdownへ変換',
-        'merge':       'OCR済み _paged.md のページマーカーを結合',
+        'merge':       'OCR済みMarkdownを1本に整える',
         'split':       '_paged.md をJSONの分割定義で文書ごとに分割',
         'deblank':     'OCR結果をもとに白紙ページを除去したPDFとMDを生成',
+        'stitch':      '分割スキャンPDFを重なり検出で復元',
         'pdf_pages':   'OCR結果をもとにPDFページを抽出・結合・2面割付'
     };
 
@@ -169,7 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ]
         },
         merge: {
-            title: 'ページ結合',
+            title: 'MD結合',
             summary: 'OCR結果に入っているページ区切りを整理し、読みやすい1本のMarkdownにまとめます。',
             sections: [
                 {
@@ -249,6 +254,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             ]
         },
+        stitch: {
+            title: '分割復元',
+            summary: 'A4スキャナで分割して読んだB4/A3などのページを、重なり部分から位置合わせして1ページのPDFに戻します。',
+            sections: [
+                {
+                    title: '入れるファイル',
+                    items: [
+                        '分割スキャン済みのPDFを入れます。',
+                        '既定では隣り合うページの重なりを見て、自動で1ページ分のまとまりを判定します。'
+                    ]
+                },
+                {
+                    title: '主な設定',
+                    items: [
+                        '分割枚数とDPIは通常autoのままで十分です。うまく分かれない場合だけ、B4左右分割なら分割枚数を2にします。',
+                        '位置合わせはHuginで行います。HuginがPATHにない場合は設定画面でHuginパスを指定します。'
+                    ]
+                },
+                {
+                    title: '出てくるもの',
+                    items: [
+                        '元PDFと同じ場所に、復元後のPDFと位置合わせレポートが作られます。',
+                        'Huginの処理中は、中間PTOと出力画像が一時フォルダに作られます。'
+                    ]
+                }
+            ]
+        },
         pdf_pages: {
             title: 'PDF抽出',
             summary: 'OCR結果を手がかりにして、PDFから必要なページだけを抜き出します。複数PDFを順番に並べることもできます。',
@@ -288,9 +320,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function positiveInt(value: any, fallback: number, min = 1, max = 999) {
-        const parsed = Number.parseInt(String(value || ''), 10);
+        const parsed = Number.parseInt(String(value ?? ''), 10);
         if (!Number.isFinite(parsed) || parsed < min) return fallback;
         return Math.min(parsed, max);
+    }
+
+    function positiveNumber(value: any, fallback: number, min = 0.1, max = 0.98) {
+        const parsed = Number.parseFloat(String(value ?? ''));
+        if (!Number.isFinite(parsed) || parsed < min) return fallback;
+        return Math.min(parsed, max);
+    }
+
+    function pdfImageFormat(value: any) {
+        return String(value || '').trim().toLowerCase() === 'png' ? 'png' : 'jpeg';
+    }
+
+    function intOrAuto(value: any, fallback: number, min = 1, max = 999) {
+        const text = String(value ?? '').trim().toLowerCase();
+        if (text === 'auto' || text === '') return 'auto';
+        return positiveInt(text, fallback, min, max);
     }
 
     function isPlainObject(value: any) {
@@ -391,6 +439,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const openai = providers.openai || {};
         const claude = providers.claude || {};
         const ndlocrLite = config?.tools?.ndlocrLite || {};
+        const stitchEngine = config?.tools?.stitchEngine || {};
 
         setInputValue('cfgGeminiApiKey', gemini.apiKey || '');
         setInputValue('cfgGeminiChatModel', gemini.chatModel || 'gemini-2.5-flash-preview');
@@ -404,6 +453,11 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgNdlocrParallelJobs', ndlocrLite.parallelJobs || 'auto');
         setInputValue('cfgNdlocrPageChunkSize', positiveInt(ndlocrLite.pageChunkSize, 8, 1, 200));
         setInputValue('cfgNdlocrImageDpi', positiveInt(ndlocrLite.imageDpi, 300, 72, 600));
+        setInputValue('cfgStitchImageDpi', stitchEngine.imageDpi === 'auto' ? 'auto' : positiveInt(stitchEngine.imageDpi, 300, 72, 600));
+        setInputValue('cfgStitchPdfImageFormat', pdfImageFormat(stitchEngine.pdfImageFormat));
+        setInputValue('cfgStitchJpegQuality', positiveNumber(stitchEngine.jpegQuality, 0.86, 0.1, 0.98));
+        setInputValue('cfgStitchMaxFallbackCandidates', positiveInt(stitchEngine.maxFallbackCandidates, 8, 0, 32));
+        setInputValue('cfgStitchHuginPath', stitchEngine.huginPath || '');
     }
 
     function readConfigForm() {
@@ -459,8 +513,23 @@ document.addEventListener('DOMContentLoaded', () => {
             pageChunkSize: positiveInt(inputValue('cfgNdlocrPageChunkSize'), 8, 1, 200),
             imageDpi: positiveInt(inputValue('cfgNdlocrImageDpi'), 300, 72, 600),
         };
+        const stitchEngine = {
+            imageDpi: intOrAuto(inputValue('cfgStitchImageDpi'), 300, 72, 600),
+            deskew: 'auto',
+            pdfImageFormat: pdfImageFormat(inputValue('cfgStitchPdfImageFormat')),
+            jpegQuality: positiveNumber(inputValue('cfgStitchJpegQuality'), 0.86, 0.1, 0.98),
+            maxFallbackCandidates: positiveInt(inputValue('cfgStitchMaxFallbackCandidates'), 8, 0, 32),
+            huginPath: inputValue('cfgStitchHuginPath'),
+        };
+        const tools: any = {};
         if (!deepEqual(ndlocrLite, defaultTools.ndlocrLite || {})) {
-            config.tools = { ndlocrLite };
+            tools.ndlocrLite = ndlocrLite;
+        }
+        if (!deepEqual(stitchEngine, defaultTools.stitchEngine || {})) {
+            tools.stitchEngine = stitchEngine;
+        }
+        if (Object.keys(tools).length > 0) {
+            config.tools = tools;
         }
 
         assignIfObjectChanged(config, 'ocr', previousUser.ocr, defaults.ocr);
@@ -812,6 +881,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ocr = isOcrTool(currentScript);
         const audio = isAudioTool(currentScript);
         const pdfPages = isPdfPagesTool(currentScript);
+        const stitch = isStitchTool(currentScript);
         const ndlocrOnly = currentOcrMode === 'ndlocr_only';
         const aiEnabled = ocr && (!ndlocrOnly || currentAutoRename);
         const modeEnabled = (ocr && !ndlocrOnly) || audio;
@@ -839,6 +909,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const showSplitJson = currentScript === 'split';
         splitJsonRow.classList.toggle('hidden', !showSplitJson);
         contextRow.classList.toggle('hidden', !(ocr || audio));
+        stitchRow.classList.toggle('hidden', !stitch);
 
         const showPdfPages = pdfPages;
         pdfPagesRow.classList.toggle('hidden', !showPdfPages);
@@ -880,6 +951,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentPdfPageType,
                 currentPdfTwoUp,
                 currentPdfDirection,
+                stitchGroupSize: stitchGroupSizeInput.value || 'auto',
+                stitchDpi: stitchDpiInput.value || 'auto',
                 batchSize: batchSizeInput.value,
                 contextText: contextInput.value,
             }));
@@ -905,6 +978,8 @@ document.addEventListener('DOMContentLoaded', () => {
             currentPdfPageType = state.currentPdfPageType || currentPdfPageType;
             currentPdfTwoUp = state.currentPdfTwoUp === true;
             currentPdfDirection = state.currentPdfDirection || currentPdfDirection;
+            stitchGroupSizeInput.value = String(state.stitchGroupSize || stitchGroupSizeInput.value || 'auto');
+            stitchDpiInput.value = String(state.stitchDpi || stitchDpiInput.value || 'auto');
             batchSizeInput.value = String(state.batchSize || batchSizeInput.value || '4');
             contextInput.value = String(state.contextText || '');
 
@@ -927,6 +1002,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     batchSizeInput.addEventListener('input', saveGuiState);
     contextInput.addEventListener('input', saveGuiState);
+    stitchGroupSizeInput.addEventListener('input', saveGuiState);
+    stitchDpiInput.addEventListener('input', saveGuiState);
 
     // 初期状態
     restoreGuiState();
@@ -1130,6 +1207,23 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        if (currentScript === 'stitch') {
+            if (files.some(file => !/\.pdf$/i.test(file))) {
+                log('分割復元にはPDFファイルを指定してください。', 'error');
+                return;
+            }
+            const groupSizeText = stitchGroupSizeInput.value.trim().toLowerCase();
+            const dpiText = stitchDpiInput.value.trim().toLowerCase();
+            if (groupSizeText !== '' && groupSizeText !== 'auto' && positiveInt(groupSizeText, 0, 2, 20) < 2) {
+                log('分割枚数は auto または2以上にしてください。', 'error');
+                return;
+            }
+            if (dpiText !== '' && dpiText !== 'auto' && positiveInt(dpiText, 0, 72, 600) < 72) {
+                log('DPIは auto または72以上にしてください。', 'error');
+                return;
+            }
+        }
+
         const audioOptions = parseAudioModel(currentAudioModel);
 
         setLoading(true);
@@ -1154,6 +1248,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     pageType: currentPdfPageType,
                     twoUp: currentPdfTwoUp,
                     direction: currentPdfDirection
+                } : null,
+                currentScript === 'stitch' ? {
+                    groupSize: intOrAuto(stitchGroupSizeInput.value, 2, 2, 20),
+                    dpi: intOrAuto(stitchDpiInput.value, 300, 72, 600)
                 } : null
             );
             if (result.success) {

@@ -125,7 +125,16 @@
         }
 
         .tool-icon { font-size: 1.1rem; color: var(--accent-color); }
-        .tool-name  { font-size: 0.8rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tool-name  {
+            font-size: 0.8rem;
+            font-weight: 500;
+            line-height: 1.15;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
 
         .tool-help-btn {
             width: 24px;
@@ -700,8 +709,8 @@
             </div>
             <div class="tool-card" data-script="merge">
                 <div class="tool-icon">📑</div>
-                <div class="tool-name">ページ結合</div>
-                <button class="tool-help-btn" type="button" data-tool-help="merge" title="ページ結合のヘルプ" aria-label="ページ結合のヘルプ">?</button>
+                <div class="tool-name">MD結合</div>
+                <button class="tool-help-btn" type="button" data-tool-help="merge" title="MD結合のヘルプ" aria-label="MD結合のヘルプ">?</button>
             </div>
             <div class="tool-card" data-script="split">
                 <div class="tool-icon">✂️</div>
@@ -712,6 +721,11 @@
                 <div class="tool-icon">🧹</div>
                 <div class="tool-name">白紙除去</div>
                 <button class="tool-help-btn" type="button" data-tool-help="deblank" title="白紙除去のヘルプ" aria-label="白紙除去のヘルプ">?</button>
+            </div>
+            <div class="tool-card" data-script="stitch">
+                <div class="tool-icon">🪡</div>
+                <div class="tool-name">分割復元</div>
+                <button class="tool-help-btn" type="button" data-tool-help="stitch" title="分割復元のヘルプ" aria-label="分割復元のヘルプ">?</button>
             </div>
             <div class="tool-card" data-script="pdf_pages">
                 <div class="tool-icon">🧩</div>
@@ -829,6 +843,21 @@
             <textarea id="contextInput" class="split-json-textarea" placeholder="登場人物、役職、会社名、事件名、呼称、専門用語などを入力"></textarea>
         </div>
 
+        <!-- 分割復元設定 -->
+        <div class="split-json-row hidden" id="stitchRow">
+            <span class="option-label">分割復元設定:</span>
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label">分割枚数:</span>
+                    <input type="text" id="stitchGroupSizeInput" class="batch-size-input" value="auto" placeholder="auto">
+                </div>
+                <div class="selector-group">
+                    <span class="option-label">DPI:</span>
+                    <input type="text" id="stitchDpiInput" class="batch-size-input" value="auto" placeholder="auto">
+                </div>
+            </div>
+        </div>
+
         <!-- PDFページ抽出設定 -->
         <div class="split-json-row hidden" id="pdfPagesRow">
             <span class="option-label">PDFごとのページ指定:</span>
@@ -920,7 +949,17 @@
                             <input class="settings-input" id="cfgNdlocrPageChunkSize" type="number" min="1" max="200" value="8">
                             <label class="option-label" for="cfgNdlocrImageDpi">画像DPI</label>
                             <input class="settings-input" id="cfgNdlocrImageDpi" type="number" min="72" max="600" value="300">
-                            <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite は初回使用時に .mimi-tools へ準備します。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。</div>
+                            <label class="option-label" for="cfgStitchImageDpi">復元DPI</label>
+                            <input class="settings-input" id="cfgStitchImageDpi" type="text" value="auto" placeholder="auto">
+                            <label class="option-label" for="cfgStitchPdfImageFormat">復元PDF画像形式</label>
+                            <input class="settings-input" id="cfgStitchPdfImageFormat" type="text" value="jpeg" placeholder="jpeg または png">
+                            <label class="option-label" for="cfgStitchJpegQuality">復元JPEG品質</label>
+                            <input class="settings-input" id="cfgStitchJpegQuality" type="number" min="0.1" max="0.98" step="0.01" value="0.86">
+                            <label class="option-label" for="cfgStitchMaxFallbackCandidates">復元追加候補数</label>
+                            <input class="settings-input" id="cfgStitchMaxFallbackCandidates" type="number" min="0" max="32" value="8">
+                            <label class="option-label" for="cfgStitchHuginPath">Huginパス</label>
+                            <input class="settings-input" id="cfgStitchHuginPath" type="text" value="" placeholder="例: C:\Program Files\Hugin\bin">
+                            <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite は初回使用時に .mimi-tools へ準備します。分割復元は Hugin を使います。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。</div>
                         </div>
                     </div>
                     <div class="modal-pane hidden" id="configKeysPane">

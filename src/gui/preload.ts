@@ -1,8 +1,8 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-    executeScript: (scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions) =>
-        ipcRenderer.invoke('execute-script', { scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions }),
+    executeScript: (scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions, stitchOptions) =>
+        ipcRenderer.invoke('execute-script', { scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions, stitchOptions }),
     loadConfig: () =>
         ipcRenderer.invoke('load-config'),
     saveConfig: (config) =>
