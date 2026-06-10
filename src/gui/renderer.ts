@@ -256,7 +256,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         stitch: {
             title: '分割復元',
-            summary: 'A4スキャナで分割して読んだB4/A3などのページを、重なり部分から位置合わせして1ページのPDFに戻します。',
+            summary: 'A4スキャナで読んだB4/A3や、A3スキャナで読んだA2など、分割スキャンしたページを重なり部分から位置合わせして1ページのPDFに戻します。',
             sections: [
                 {
                     title: '入れるファイル',
@@ -269,14 +269,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     title: '主な設定',
                     items: [
                         '分割枚数とDPIは通常autoのままで十分です。うまく分かれない場合だけ、B4左右分割なら分割枚数を2にします。',
-                        '位置合わせはHuginで行います。HuginがPATHにない場合は設定画面でHuginパスを指定します。'
+                        '位置合わせは内蔵エンジンで行います。追加ソフトのインストールは不要です。'
                     ]
                 },
                 {
                     title: '出てくるもの',
                     items: [
                         '元PDFと同じ場所に、復元後のPDFと位置合わせレポートが作られます。',
-                        'Huginの処理中は、中間PTOと出力画像が一時フォルダに作られます。'
+                        '隣り合うスキャンに重なりがないと自動復元できません。少し重ねてスキャンしてください。'
                     ]
                 }
             ]
@@ -456,8 +456,6 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgStitchImageDpi', stitchEngine.imageDpi === 'auto' ? 'auto' : positiveInt(stitchEngine.imageDpi, 300, 72, 600));
         setInputValue('cfgStitchPdfImageFormat', pdfImageFormat(stitchEngine.pdfImageFormat));
         setInputValue('cfgStitchJpegQuality', positiveNumber(stitchEngine.jpegQuality, 0.86, 0.1, 0.98));
-        setInputValue('cfgStitchMaxFallbackCandidates', positiveInt(stitchEngine.maxFallbackCandidates, 8, 0, 32));
-        setInputValue('cfgStitchHuginPath', stitchEngine.huginPath || '');
     }
 
     function readConfigForm() {
@@ -518,8 +516,6 @@ document.addEventListener('DOMContentLoaded', () => {
             deskew: 'auto',
             pdfImageFormat: pdfImageFormat(inputValue('cfgStitchPdfImageFormat')),
             jpegQuality: positiveNumber(inputValue('cfgStitchJpegQuality'), 0.86, 0.1, 0.98),
-            maxFallbackCandidates: positiveInt(inputValue('cfgStitchMaxFallbackCandidates'), 8, 0, 32),
-            huginPath: inputValue('cfgStitchHuginPath'),
         };
         const tools: any = {};
         if (!deepEqual(ndlocrLite, defaultTools.ndlocrLite || {})) {

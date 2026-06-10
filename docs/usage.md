@@ -189,7 +189,7 @@ npm run deblank -- .\samples\scanned.pdf --threshold 20
 
 ### 分割スキャンPDFのページ復元
 
-A4スキャナで分割スキャンしたB4/A3などのページを、Huginで位置合わせして復元します。低解像度の重なり検出で、どの入力ページが同じ実ページに属するかを自動判定します。必要な場合は `--group-size` で固定枚数を指定できます。
+A4スキャナで分割スキャンしたB4/A3、A3スキャナで分割スキャンしたA2などのページを、内蔵の位置合わせエンジンで1ページへ復元します。外部ツールのインストールは不要です。位相相関による重なり検出で、どの入力ページが同じ実ページに属するか（および180度回転の有無）を自動判定し、重なり領域のパッチマッチングで平行移動と微小回転を推定します。合成は両画像の差が最小になる縫い目で片方の画像へ切り替える方式のため、二重像（ゴースト）が出ません。必要な場合は `--group-size` で固定枚数を指定できます。
 
 ```powershell
 npm run stitch -- .\samples\b4_split_scan.pdf
@@ -198,7 +198,6 @@ npm run stitch -- .\samples\b4_split_scan.pdf --group-size 3
 npm run stitch -- .\samples\b4_split_scan.pdf --group-size 2 --keep-temp
 npm run stitch -- .\samples\b4_split_scan.pdf --deskew off
 npm run stitch -- .\samples\b4_split_scan.pdf --jpeg-quality 0.9
-npm run stitch -- .\samples\b4_split_scan.pdf --max-fallback-candidates 32
 ```
 
 主なオプション:
@@ -207,13 +206,12 @@ npm run stitch -- .\samples\b4_split_scan.pdf --max-fallback-candidates 32
 | --- | --- |
 | `--group-size auto\|<n>` | 何ページを1ページへ復元するか。既定は `auto`、重なり検出でページ組を自動判定します |
 | `--dpi auto\|<n>` | PDFを画像化するDPI。既定は `auto`、現在は出力用に300dpiを使います |
-| `--deskew auto\|off` | Hugin前後に水平/垂直特徴から小角度の傾きを補正します。既定は `auto` |
+| `--deskew auto\|off` | 合成前後に水平/垂直特徴から小角度の傾きを補正します。既定は `auto` |
 | `--pdf-image-format jpeg\|png` | 復元PDF内の画像形式。既定は `jpeg` |
 | `--jpeg-quality <0.1-1.0>` | JPEG品質。既定は `0.86` |
-| `--max-fallback-candidates <n>` | 弱いマッチング時に試す追加候補数。既定は `8`、最大は `32` |
-| `--keep-temp` | 中間PNG、PTO、Hugin出力を残す |
+| `--keep-temp` | 中間PNGを残す |
 
-Hugin のインストールが必要です。`pto_gen`、`cpfind`、`autooptimiser`、`hugin_executor`、`nona` などが PATH にない場合は、`config.json` の `tools.stitchEngine.huginPath` に Hugin の `bin` フォルダ、または `hugin_executor.exe` のパスを指定してください。通常のマッチングが弱いページでは、端領域と回転候補を追加で試します。候補が弱い場合は重い最適化へ進まず、信頼できる重なりがないものとして失敗します。各画像に共通して写っている重なり領域が必要です。重なりがほとんどない隣接画像の合成には、別のレイアウト合成モードが必要です。完成ページの向き補正は行いません。出力PDFは既定でJPEG画像を埋め込み、肥大化を抑えます。出力は `*_stitched.pdf` と `*_stitch_report.json` です。
+位置合わせでは、スキャン間の明るさの差も重なり領域の輝度から自動補正します。各画像に共通して写っている重なり領域が必要です。重なりがほとんどない隣接画像は自動判定できないため、分割スキャン時は数センチ重ねて読み取ってください。完成ページの向き補正は行いません。出力PDFは既定でJPEG画像を埋め込み、肥大化を抑えます。出力は `*_stitched.pdf` と `*_stitch_report.json` です。
 
 ### PDFページ抽出・結合
 

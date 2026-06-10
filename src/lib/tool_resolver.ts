@@ -355,81 +355,6 @@ function ensureNdlocrVenv(repoPath, basePython) {
     return venvPython;
 }
 
-function configuredHuginDirs(settings: any = {}) {
-    const dirs = [];
-    const configured = String(settings.huginPath || settings.huginBinPath || '').trim();
-    if (configured) {
-        const resolved = path.resolve(configured);
-        if (fs.existsSync(resolved)) {
-            const stat = fs.statSync(resolved);
-            dirs.push(stat.isDirectory() ? resolved : path.dirname(resolved));
-        } else {
-            dirs.push(resolved);
-        }
-    }
-    if (process.env.HUGIN_BIN) dirs.push(process.env.HUGIN_BIN);
-    if (process.env.HUGIN_DIR) {
-        dirs.push(process.env.HUGIN_DIR);
-        dirs.push(path.join(process.env.HUGIN_DIR, 'bin'));
-    }
-    if (process.platform === 'win32') {
-        dirs.push('C:\\Program Files\\Hugin\\bin');
-        dirs.push('C:\\Program Files\\Hugin');
-        dirs.push('C:\\Program Files (x86)\\Hugin\\bin');
-        dirs.push('C:\\Program Files (x86)\\Hugin');
-    } else if (process.platform === 'darwin') {
-        dirs.push('/Applications/Hugin/Hugin.app/Contents/MacOS');
-        dirs.push('/Applications/Hugin.app/Contents/MacOS');
-    } else {
-        dirs.push('/usr/bin');
-        dirs.push('/usr/local/bin');
-    }
-    return [...new Set(dirs.filter(Boolean).map(dir => path.resolve(String(dir))))];
-}
-
-function commandNameForPlatform(commandName) {
-    return process.platform === 'win32' && !/\.(exe|cmd|bat|com)$/i.test(commandName)
-        ? `${commandName}.exe`
-        : commandName;
-}
-
-function findHuginCommand(commandName, settings: any = {}) {
-    const configured = String(settings.huginPath || settings.huginBinPath || '').trim();
-    const executableName = commandNameForPlatform(commandName);
-    if (configured && isExecutableFile(path.resolve(configured)) && path.basename(configured).toLowerCase() === executableName.toLowerCase()) {
-        return path.resolve(configured);
-    }
-    const fromPath = findOnPath(commandName);
-    if (fromPath) return fromPath;
-    for (const dir of configuredHuginDirs(settings)) {
-        const direct = path.join(dir, executableName);
-        if (isExecutableFile(direct)) return direct;
-        const nested = path.join(dir, 'bin', executableName);
-        if (isExecutableFile(nested)) return nested;
-    }
-    return null;
-}
-
-function resolveStitchEngine(settings: any = {}) {
-    const ptoGen = findHuginCommand('pto_gen', settings);
-    const ptoLensstack = findHuginCommand('pto_lensstack', settings);
-    const cpfind = findHuginCommand('cpfind', settings);
-    const cpclean = findHuginCommand('cpclean', settings);
-    const linefind = findHuginCommand('linefind', settings);
-    const ptoVar = findHuginCommand('pto_var', settings);
-    const autooptimiser = findHuginCommand('autooptimiser', settings);
-    const panoModify = findHuginCommand('pano_modify', settings);
-    const huginExecutor = findHuginCommand('hugin_executor', settings);
-    const nona = findHuginCommand('nona', settings);
-    if (!ptoGen || !ptoLensstack || !cpfind || !cpclean || !linefind || !ptoVar || !autooptimiser || !panoModify || !huginExecutor || !nona) {
-        throw new Error(
-            'Hugin CLI が見つかりません。HuginをインストールしてbinフォルダをPATHに追加するか、' +
-            'config.json の tools.stitchEngine.huginPath に Hugin の bin フォルダまたは hugin_executor.exe のパスを指定してください。'
-        );
-    }
-    return { ptoGen, ptoLensstack, cpfind, cpclean, linefind, ptoVar, autooptimiser, panoModify, huginExecutor, nona };
-}
-
 async function resolveNdlocrLite(settings: any = {}) {
     const configuredRepo = String(settings.repoPath || '').trim();
     const configuredPython = String(settings.pythonPath || '').trim() || (process.platform === 'win32' ? 'python' : 'python3');
@@ -470,5 +395,4 @@ module.exports = {
     getToolsRoot,
     resolveFfmpegTools,
     resolveNdlocrLite,
-    resolveStitchEngine,
 };

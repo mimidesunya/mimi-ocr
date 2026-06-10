@@ -135,18 +135,16 @@ ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffm
 
 ### `tools.stitchEngine`
 
-分割スキャンPDFのページ復元で使うHuginと傾き補正の設定です。標準値は `app.defaults.json` にあります。
+分割スキャンPDFのページ復元と傾き補正の設定です。位置合わせは内蔵エンジンで処理するため、外部ツールの設定は不要です。標準値は `app.defaults.json` にあります。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `imageDpi` | 任意 | `auto` または PDF 画像化の解像度（dpi）。`auto` は現在300dpiです |
-| `deskew` | 任意 | `auto` または `off`。`auto` ではHugin前後に水平/垂直特徴から小角度の傾きを補正します |
+| `deskew` | 任意 | `auto` または `off`。`auto` では合成前後に水平/垂直特徴から小角度の傾きを補正します |
 | `pdfImageFormat` | 任意 | `jpeg` または `png`。復元PDF内に埋め込む画像形式です。既定は `jpeg` |
 | `jpegQuality` | 任意 | `0.1` から `0.98` のJPEG品質。既定は `0.86` |
-| `maxFallbackCandidates` | 任意 | 通常マッチングが弱い時に試す追加候補数。既定は `8`、最大は `32` |
-| `huginPath` | 任意 | Hugin の `bin` フォルダ、または `hugin_executor.exe` などの実行ファイルパス |
 
-Hugin が PATH にない Windows 環境では、通常 `huginPath` に `C:\Program Files\Hugin\bin` を指定します。`deskew: "auto"` は数度以内の傾きを対象にします。90度や180度の読み方向補正は行いません。`pdfImageFormat: "jpeg"` はスキャン画像PDFの肥大化を避けるための既定です。無劣化で残したい場合は `png` に変更できます。`maxFallbackCandidates` を増やすと特殊な回転候補も探せますが、重なりがないPDFでは失敗までの時間が延びます。
+`deskew: "auto"` は数度以内の傾きを対象にします。ページ組の自動判定では180度回転（縦横が違う場合は90度回転）も検出するため、読み方向が逆向きのスキャンも復元できますが、完成ページ自体の向き補正は行いません。`pdfImageFormat: "jpeg"` はスキャン画像PDFの肥大化を避けるための既定です。無劣化で残したい場合は `png` に変更できます。
 
 ### 法匪テンプレート
 

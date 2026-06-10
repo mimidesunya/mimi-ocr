@@ -120,7 +120,7 @@ npm run deblank -- <PDFファイル> [--threshold <文字数>]
 
 ### 分割スキャンPDFのページ復元
 
-A4スキャナで分割スキャンしたB4/A3などのページを、Huginで位置合わせして1ページへ復元します。低解像度の重なり検出で、どの入力ページが同じ実ページに属するかを自動判定します。必要な場合は `--group-size` で固定枚数を指定できます。
+A4スキャナで分割スキャンしたB4/A3、A3スキャナで分割スキャンしたA2などのページを、内蔵の位置合わせエンジンで1ページへ復元します。外部ツールのインストールは不要です。位相相関による重なり検出で、どの入力ページが同じ実ページに属するか（および180度回転の有無）を自動判定し、重なり領域のパッチマッチングで平行移動と微小回転を推定します。合成は両画像の差が最小になる縫い目で片方の画像へ切り替える方式のため、二重像（ゴースト）が出ません。必要な場合は `--group-size` で固定枚数を指定できます。
 
 ```powershell
 npm run stitch -- .\sample.pdf
@@ -129,10 +129,9 @@ npm run stitch -- .\sample.pdf --group-size 3
 npm run stitch -- .\sample.pdf --group-size 2 --output .\sample_b4.pdf
 npm run stitch -- .\sample.pdf --deskew off
 npm run stitch -- .\sample.pdf --jpeg-quality 0.9
-npm run stitch -- .\sample.pdf --max-fallback-candidates 32
 ```
 
-Hugin のインストールが必要です。`pto_gen`、`cpfind`、`autooptimiser`、`hugin_executor`、`nona` などが PATH にない場合は、`config.json` の `tools.stitchEngine.huginPath` に Hugin の `bin` フォルダ、または `hugin_executor.exe` のパスを指定してください。既定では `--group-size auto --dpi auto --deskew auto --pdf-image-format jpeg --jpeg-quality 0.86 --max-fallback-candidates 8` として、重なり検出でページ組を自動判定し、出力用DPIは300dpiを使います。Hugin前後に水平線・垂直線・文字列などの特徴から小角度の傾きを補正します。不要な場合は `--deskew off` で無効化できます。重なりがほとんどない隣接画像は自動判定できないため、別のレイアウト合成モードが必要です。出力は `*_stitched.pdf` と `*_stitch_report.json` です。
+既定では `--group-size auto --dpi auto --deskew auto --pdf-image-format jpeg --jpeg-quality 0.86` として、重なり検出でページ組を自動判定し、出力用DPIは300dpiを使います。合成前後に水平線・垂直線・文字列などの特徴から小角度の傾きを補正します。不要な場合は `--deskew off` で無効化できます。スキャン間の明るさの差も重なり領域から自動補正します。重なりがほとんどない隣接画像は自動判定できないため、分割スキャン時は数センチ重ねて読み取ってください。出力は `*_stitched.pdf` と `*_stitch_report.json` です。
 
 ### PDFページ抽出・結合
 

@@ -43,9 +43,7 @@ const FALLBACK_APP_DEFAULTS = {
             imageDpi: 'auto',
             deskew: 'auto',
             pdfImageFormat: 'jpeg',
-            jpegQuality: 0.86,
-            maxFallbackCandidates: 8,
-            huginPath: ''
+            jpegQuality: 0.86
         }
     }
 };
