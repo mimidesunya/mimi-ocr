@@ -9,5 +9,8 @@
     "openai": {
       "apiKey": "YOUR_OPENAI_API_KEY"
     }
+  },
+  "tools": {
+    "rootDir": ""
   }
 }

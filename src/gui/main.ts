@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { findConfigPath, findAppDefaultsPath, loadAppDefaults, loadUserConfig, loadConfig } = require('../lib/gemini_client');
+const { getScriptNodeRuntime } = require('../lib/node_runtime');
 
 // コンソールウィンドウの管理
 let consoleWindows = new Map();
@@ -40,11 +41,28 @@ function getProjectRootForGui() {
     return path.resolve(__dirname, '../../');
 }
 
+function isReleaseRuntime() {
+    return process.env.MIMI_OCR_RELEASE === '1';
+}
+
+function ensureReleaseConfigEnv() {
+    if (!isReleaseRuntime()) return;
+    if (!process.env.MIMI_OCR_CONFIG_DIR) {
+        process.env.MIMI_OCR_CONFIG_DIR = app.getPath('userData');
+    }
+}
+
 function getDefaultConfig() {
+    ensureReleaseConfigEnv();
     return loadAppDefaults();
 }
 
 function getWritableConfigPath() {
+    ensureReleaseConfigEnv();
+    const envConfigPath = process.env.MIMI_OCR_CONFIG;
+    if (envConfigPath) return path.resolve(envConfigPath);
+    const envConfigDir = process.env.MIMI_OCR_CONFIG_DIR;
+    if (envConfigDir) return path.join(path.resolve(envConfigDir), 'config.json');
     const existing = findConfigPath();
     if (existing) return existing;
     const packagePath = findUpFile('package.json');
@@ -55,6 +73,7 @@ function getWritableConfigPath() {
 }
 
 function loadConfigForGui() {
+    ensureReleaseConfigEnv();
     const configPath = findConfigPath();
     const defaults = getDefaultConfig();
     const userConfig = loadUserConfig() || {};
@@ -71,6 +90,54 @@ function loadConfigForGui() {
         userConfig,
         defaults
     };
+}
+
+function writeUserConfig(config) {
+    const configPath = getWritableConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+    return configPath;
+}
+
+function saveToolsRootDir(rootDir) {
+    const userConfig = loadUserConfig() || {};
+    if (!userConfig.tools || typeof userConfig.tools !== 'object' || Array.isArray(userConfig.tools)) {
+        userConfig.tools = {};
+    }
+    userConfig.tools.rootDir = path.resolve(rootDir);
+    const configPath = writeUserConfig(userConfig);
+    return { configPath, userConfig };
+}
+
+function getConfiguredToolsRoot() {
+    const envDir = String(process.env.MIMI_TOOLS_DIR || '').trim();
+    if (envDir) return path.resolve(envDir);
+    const config = loadConfig() || {};
+    const configuredDir = String(config?.tools?.rootDir || '').trim();
+    if (configuredDir) return path.resolve(configuredDir);
+    if (isReleaseRuntime()) return path.join(app.getPath('userData'), 'tools');
+    return path.join(getProjectRootForGui(), '.mimi-tools');
+}
+
+function isNdlocrLiteInstalled(toolsRoot) {
+    return fs.existsSync(path.join(toolsRoot, 'ndlocr-lite', 'src', 'ocr.py'));
+}
+
+function hasGeminiApiKey() {
+    const config = loadConfig() || {};
+    return Boolean(
+        config?.providers?.gemini?.apiKey ||
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY
+    );
+}
+
+function getBundledNodeRuntime(projectRoot) {
+    return getScriptNodeRuntime({ projectRoot, execPath: process.execPath, env: process.env, platform: process.platform });
+}
+
+function getBundledNodePath(projectRoot) {
+    return getBundledNodeRuntime(projectRoot).command;
 }
 
 function createWindow() {
@@ -181,9 +248,7 @@ ipcMain.handle('save-config', async (_event, config) => {
         throw new Error('設定データの形式が不正です');
     }
 
-    const configPath = getWritableConfigPath();
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+    const configPath = writeUserConfig(config);
     return { success: true, path: configPath };
 });
 
@@ -194,6 +259,63 @@ ipcMain.handle('open-external-url', async (_event, url) => {
     }
     await shell.openExternal(parsed.toString());
     return { success: true };
+});
+
+ipcMain.handle('get-setup-status', async () => {
+    ensureReleaseConfigEnv();
+    const toolsRoot = getConfiguredToolsRoot();
+    return {
+        success: true,
+        configPath: getWritableConfigPath(),
+        toolsRoot,
+        ndlocrInstalled: isNdlocrLiteInstalled(toolsRoot),
+        hasGeminiApiKey: hasGeminiApiKey(),
+        nodePath: getBundledNodePath(getProjectRootForGui()),
+        releaseRuntime: isReleaseRuntime()
+    };
+});
+
+ipcMain.handle('choose-tools-root', async (_event, options: any = {}) => {
+    ensureReleaseConfigEnv();
+    const currentToolsRoot = getConfiguredToolsRoot();
+    const title = options?.title || '外部ツールの保存先を選択';
+    const result = await dialog.showOpenDialog({
+        title,
+        defaultPath: fs.existsSync(currentToolsRoot) ? currentToolsRoot : app.getPath('documents'),
+        properties: ['openDirectory', 'createDirectory']
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, canceled: true };
+    }
+
+    const toolsRoot = result.filePaths[0];
+    const saved = saveToolsRootDir(toolsRoot);
+    process.env.MIMI_TOOLS_DIR = path.resolve(toolsRoot);
+    return {
+        success: true,
+        toolsRoot: path.resolve(toolsRoot),
+        configPath: saved.configPath,
+        userConfig: saved.userConfig,
+        ndlocrInstalled: isNdlocrLiteInstalled(path.resolve(toolsRoot))
+    };
+});
+
+ipcMain.handle('prepare-ndlocr-root', async () => {
+    ensureReleaseConfigEnv();
+    const currentToolsRoot = getConfiguredToolsRoot();
+    fs.mkdirSync(currentToolsRoot, { recursive: true });
+    process.env.MIMI_TOOLS_DIR = currentToolsRoot;
+
+    if (isNdlocrLiteInstalled(currentToolsRoot)) {
+        return { success: true, toolsRoot: currentToolsRoot, alreadyInstalled: true };
+    }
+
+    return {
+        success: true,
+        toolsRoot: currentToolsRoot,
+        alreadyInstalled: false
+    };
 });
 
 ipcMain.handle('execute-script', async (event, {
@@ -229,9 +351,22 @@ ipcMain.handle('execute-script', async (event, {
     const isStitch = scriptKey === 'stitch';
     const isPdfPages = scriptKey === 'pdf_pages';
     const isAudio = scriptKey === 'transcribe_audio';
-    const selectedOcrMode = ocrMode || 'ai';
+    const selectedOcrMode = ocrMode || 'ndlocr_ai';
     const useNdlocr = selectedOcrMode === 'ndlocr_ai' || selectedOcrMode === 'ndlocr_only';
     const ndlocrOnly = selectedOcrMode === 'ndlocr_only';
+    const ocrUsesAi = !isMerge && !isDeblank && !isSplit && !isPdfPages && !isStitch && (!ndlocrOnly || autoRename === true);
+    const needsGeminiApiKey = (isAudio && audioOptions?.provider === 'gemini') ||
+        (ocrUsesAi && (aiProvider || 'gemini') === 'gemini');
+
+    ensureReleaseConfigEnv();
+    if (needsGeminiApiKey && !hasGeminiApiKey()) {
+        return {
+            success: false,
+            setupRequired: 'gemini-api-key',
+            code: -2,
+            message: 'Gemini APIキーが未設定です。設定画面で APIキーを保存してください。'
+        };
+    }
 
     // 分割ツール: JSONを一時ファイルに書き出し
     let splitJsonTempFile = null;
@@ -361,9 +496,12 @@ ipcMain.handle('execute-script', async (event, {
     });
 
     // 実行コマンドをログに表示
-    const cmdSummary = `node ${path.basename(scriptPath)} ${scriptArgs.filter(a => !filePaths.includes(a)).join(' ')} ...`;
+    const nodeRuntime = getBundledNodeRuntime(projectRoot);
+    const nodeCommand = nodeRuntime.command;
+    const cmdSummary = `${path.basename(nodeCommand)} ${path.basename(scriptPath)} ${scriptArgs.filter(a => !filePaths.includes(a)).join(' ')} ...`;
     consoleWin.webContents.send('console-command', `実行コマンド: ${cmdSummary}`);
     consoleWin.webContents.send('console-info', `作業ディレクトリ: ${projectRoot}`);
+    consoleWin.webContents.send('console-info', `Node: ${nodeCommand}`);
 
     if (isSplit) {
         consoleWin.webContents.send('console-info', '分割定義JSONに基づいてファイルを分割します');
@@ -400,11 +538,22 @@ ipcMain.handle('execute-script', async (event, {
     event.sender.send('script-log', `実行: ${cmdSummary}\n`);
 
     return new Promise((resolve) => {
-        const childProcess = spawn('node', [scriptPath, ...scriptArgs], {
+        const childEnv: any = {
+            ...process.env,
+            MIMI_OCR_PROJECT_ROOT: projectRoot,
+            MIMI_OCR_CONFIG_DIR: process.env.MIMI_OCR_CONFIG_DIR || '',
+            MIMI_TOOLS_DIR: getConfiguredToolsRoot()
+        };
+        if (nodeRuntime.electronAsNode) {
+            childEnv.ELECTRON_RUN_AS_NODE = '1';
+        } else {
+            delete childEnv.ELECTRON_RUN_AS_NODE;
+        }
+        const childProcess = spawn(nodeCommand, [scriptPath, ...scriptArgs], {
             cwd: projectRoot,
             shell: false,
             windowsHide: true,
-            env: { ...process.env, MIMI_OCR_PROJECT_ROOT: projectRoot }
+            env: childEnv
         });
 
         let stdout = '';
@@ -445,7 +594,9 @@ ipcMain.handle('execute-script', async (event, {
             const text = data.toString();
             stderr += text;
             text.split('\n').forEach(line => {
-                if (line.trim()) safeSend('console-error', line);
+                if (!line.trim()) return;
+                if (nodeRuntime.electronAsNode && /crashpad\\.*registration_protocol_win\.cc/i.test(line)) return;
+                safeSend('console-error', line);
             });
         });
 

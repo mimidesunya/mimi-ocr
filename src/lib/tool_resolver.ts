@@ -5,7 +5,7 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { getProjectRoot } = require('./gemini_client');
+const { getProjectRoot, loadConfig } = require('./gemini_client');
 
 const FFMPEG_ZIP_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
 const FFMPEG_SHA_URL = `${FFMPEG_ZIP_URL}.sha256`;
@@ -13,7 +13,20 @@ const NDLOCR_RELEASE_API_URL = 'https://api.github.com/repos/ndl-lab/ndlocr-lite
 const NDLOCR_SOURCE_FALLBACK_URL = 'https://github.com/ndl-lab/ndlocr-lite/archive/refs/heads/master.zip';
 
 function getToolsRoot() {
-    return path.resolve(process.env.MIMI_TOOLS_DIR || path.join(getProjectRoot(), '.mimi-tools'));
+    const envDir = String(process.env.MIMI_TOOLS_DIR || '').trim();
+    if (envDir) return path.resolve(envDir);
+
+    try {
+        const configuredDir = String(loadConfig()?.tools?.rootDir || '').trim();
+        if (configuredDir) return path.resolve(configuredDir);
+    } catch (_err) {
+    }
+
+    if (process.env.MIMI_OCR_RELEASE === '1' && process.env.MIMI_OCR_CONFIG_DIR) {
+        return path.resolve(process.env.MIMI_OCR_CONFIG_DIR, 'tools');
+    }
+
+    return path.resolve(path.join(getProjectRoot(), '.mimi-tools'));
 }
 
 function ensureDir(dirPath) {
@@ -303,6 +316,30 @@ function probePythonCommand(command, argsPrefix = []) {
     return !result.error && result.status === 0;
 }
 
+function getWindowsPythonInstallCandidates() {
+    if (process.platform !== 'win32') return [];
+    const roots = [
+        process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Python') : '',
+        process.env.ProgramFiles || '',
+        process.env['ProgramFiles(x86)'] || '',
+    ].filter(Boolean);
+
+    const candidates = [];
+    for (const root of roots) {
+        if (!fs.existsSync(root)) continue;
+        try {
+            for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+                if (!entry.isDirectory() || !/^Python\d+/i.test(entry.name)) continue;
+                const pythonPath = path.join(root, entry.name, 'python.exe');
+                if (isExecutableFile(pythonPath)) candidates.push(pythonPath);
+            }
+        } catch (_err) {
+        }
+    }
+
+    return candidates.sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 function resolveBasePythonCommand(configuredPython = '') {
     ensureDir(getToolsRoot());
     const configured = String(configuredPython || '').trim();
@@ -315,6 +352,9 @@ function resolveBasePythonCommand(configuredPython = '') {
 
     const candidates = [];
     if (process.platform === 'win32') {
+        for (const pythonPath of getWindowsPythonInstallCandidates()) {
+            candidates.push({ command: pythonPath, argsPrefix: [] });
+        }
         const pyLauncher = findOnPath('py.exe') || findOnPath('py');
         if (pyLauncher) candidates.push({ command: pyLauncher, argsPrefix: ['-3'] });
         candidates.push({ command: 'py', argsPrefix: ['-3'] });
@@ -329,13 +369,18 @@ function resolveBasePythonCommand(configuredPython = '') {
         }
     }
 
-    throw new Error('Python 3 が見つかりません。Windowsでは Python 3 をインストールするか、config.json の tools.ndlocrLite.pythonPath に Python のパスを指定してください。');
+    throw new Error('Python 3 が見つかりません。ndlocr-lite の自動セットアップには Python 3.10 以上が必要です。Windowsでは https://www.python.org/downloads/windows/ から Python をインストールするか、config.json の tools.ndlocrLite.pythonPath に Python のパスを指定してください。');
 }
 
 function ensureNdlocrVenv(repoPath, basePython) {
     const venvDir = path.join(getToolsRoot(), 'ndlocr-lite-venv');
     const venvPython = getVenvPythonPath(venvDir);
     const markerPath = path.join(venvDir, '.mimi-installed');
+
+    if (isExecutableFile(venvPython) && !probePythonCommand(venvPython)) {
+        console.warn('[tools] ndlocr-lite用のPython環境を起動できないため作り直します。');
+        fs.rmSync(venvDir, { recursive: true, force: true });
+    }
 
     if (!isExecutableFile(venvPython)) {
         console.log('[tools] ndlocr-lite用のPython環境を作ります。');
@@ -357,10 +402,11 @@ function ensureNdlocrVenv(repoPath, basePython) {
 
 async function resolveNdlocrLite(settings: any = {}) {
     const configuredRepo = String(settings.repoPath || '').trim();
-    const configuredPython = String(settings.pythonPath || '').trim() || (process.platform === 'win32' ? 'python' : 'python3');
+    const configuredPython = String(settings.pythonPath || '').trim();
 
     if (configuredRepo && fs.existsSync(path.join(configuredRepo, 'src', 'ocr.py'))) {
-        return { repoPath: configuredRepo, pythonPath: configuredPython };
+        const pythonPath = configuredPython || ensureNdlocrVenv(configuredRepo, configuredPython);
+        return { repoPath: configuredRepo, pythonPath };
     }
 
     const repoPath = path.join(getToolsRoot(), 'ndlocr-lite');

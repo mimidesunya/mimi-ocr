@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('save-config', config),
     openExternalUrl: (url) =>
         ipcRenderer.invoke('open-external-url', url),
+    getSetupStatus: () =>
+        ipcRenderer.invoke('get-setup-status'),
+    chooseToolsRoot: (options) =>
+        ipcRenderer.invoke('choose-tools-root', options),
+    prepareNdlocrRoot: () =>
+        ipcRenderer.invoke('prepare-ndlocr-root'),
     onLog: (callback) =>
         ipcRenderer.on('script-log', (_event, value) => callback(value)),
     onError: (callback) =>

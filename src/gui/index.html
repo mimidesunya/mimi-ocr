@@ -577,6 +577,13 @@
             font-size: 0.76rem;
         }
 
+        .settings-inline {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 6px;
+            align-items: center;
+        }
+
         .settings-note {
             grid-column: 1 / -1;
             color: var(--secondary-text-color);
@@ -765,8 +772,8 @@
                 <div class="selector-group">
                     <span class="option-label" id="labelOcr">OCR:</span>
                     <div class="toggle-group" id="toggleOcr">
-                        <button class="toggle-btn active" data-ocr-mode="ai">AIのみ</button>
-                        <button class="toggle-btn" data-ocr-mode="ndlocr_ai">ndlocr+AI</button>
+                        <button class="toggle-btn" data-ocr-mode="ai">AIのみ</button>
+                        <button class="toggle-btn active" data-ocr-mode="ndlocr_ai">ndlocr+AI</button>
                         <button class="toggle-btn" data-ocr-mode="ndlocr_only">ndlocr-only</button>
                     </div>
                 </div>
@@ -943,6 +950,11 @@
                             <input class="settings-input" id="cfgClaudeChatModel" type="text" placeholder="claude-opus-4-8">
 
                             <div class="settings-section-title">自動準備する外部ツール</div>
+                            <label class="option-label" for="cfgToolsRootDir">保存先</label>
+                            <div class="settings-inline">
+                                <input class="settings-input" id="cfgToolsRootDir" type="text" placeholder="未指定ならアプリ標準の場所">
+                                <button class="context-browse-btn" id="cfgToolsRootBrowseBtn" type="button">選択</button>
+                            </div>
                             <label class="option-label" for="cfgNdlocrParallelJobs">ndlocr並列数</label>
                             <input class="settings-input" id="cfgNdlocrParallelJobs" type="text" placeholder="auto">
                             <label class="option-label" for="cfgNdlocrPageChunkSize">ページ塊</label>
@@ -955,7 +967,7 @@
                             <input class="settings-input" id="cfgStitchPdfImageFormat" type="text" value="jpeg" placeholder="jpeg または png">
                             <label class="option-label" for="cfgStitchJpegQuality">復元JPEG品質</label>
                             <input class="settings-input" id="cfgStitchJpegQuality" type="number" min="0.1" max="0.98" step="0.01" value="0.86">
-                            <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite は初回使用時に .mimi-tools へ準備します。分割復元は内蔵エンジンで処理するため追加ソフトは不要です。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。</div>
+                            <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite は初回使用時にアプリ標準の保存先へ GitHub から自動取得します。分割復元は内蔵エンジンで処理するため追加ソフトは不要です。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。</div>
                         </div>
                     </div>
                     <div class="modal-pane hidden" id="configKeysPane">

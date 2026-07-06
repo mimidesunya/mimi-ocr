@@ -12,6 +12,7 @@ const FALLBACK_APP_DEFAULTS = {
         target: 'general',
         mode: 'sync',
         batchSize: 4,
+        ndlocr: 'pre',
         preferPdfText: false,
         autoRename: false,
         skipFormattedRename: false
@@ -34,6 +35,7 @@ const FALLBACK_APP_DEFAULTS = {
         }
     },
     tools: {
+        rootDir: '',
         ndlocrLite: {
             parallelJobs: 'auto',
             pageChunkSize: 8,
@@ -49,6 +51,12 @@ const FALLBACK_APP_DEFAULTS = {
 };
 
 function findUpFile(fileName) {
+    const envConfigDir = process.env.MIMI_OCR_CONFIG_DIR;
+    if (envConfigDir) {
+        const candidate = path.join(path.resolve(envConfigDir), fileName);
+        if (fs.existsSync(candidate)) return candidate;
+    }
+
     const envProjectRoot = process.env.MIMI_OCR_PROJECT_ROOT;
     const startDirs = [envProjectRoot, process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
     const visited = new Set();
@@ -71,6 +79,10 @@ function findUpFile(fileName) {
 }
 
 function findConfigPath() {
+    const envConfigPath = process.env.MIMI_OCR_CONFIG;
+    if (envConfigPath && fs.existsSync(envConfigPath)) {
+        return path.resolve(envConfigPath);
+    }
     return findUpFile('config.json');
 }
 

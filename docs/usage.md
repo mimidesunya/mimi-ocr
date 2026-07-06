@@ -290,7 +290,7 @@ OCR 直後の Markdown には、末尾に HTMLコメント形式で実行設定�
       "end": 12,
       "total": 12
     },
-    "ndlocr": "off"
+    "ndlocr": "pre"
   }
 }
 -->

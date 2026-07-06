@@ -15,9 +15,35 @@ class Program {
     [STAThread]
     static void Main() {
         try {
-            // binフォルダから実行される前提
-            string binDir = AppDomain.CurrentDomain.BaseDirectory;
-            string projectRoot = Path.GetFullPath(Path.Combine(binDir, ".."));
+            string exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            Environment.SetEnvironmentVariable("ELECTRON_RUN_AS_NODE", null);
+
+            string releaseAppDir = Path.Combine(exeDir, "app");
+            string releaseElectronPath = Path.Combine(exeDir, "runtime", "electron", "electron.exe");
+            string releaseNodePath = Path.Combine(exeDir, "runtime", "node", "node.exe");
+            string releaseMainPath = Path.Combine(releaseAppDir, "dist", "src", "gui", "main.js");
+
+            if (Directory.Exists(releaseAppDir) && File.Exists(releaseElectronPath) && File.Exists(releaseMainPath)) {
+                Environment.SetEnvironmentVariable("MIMI_OCR_PROJECT_ROOT", releaseAppDir);
+                Environment.SetEnvironmentVariable("MIMI_OCR_RELEASE", "1");
+                if (File.Exists(releaseNodePath)) {
+                    Environment.SetEnvironmentVariable("MIMI_OCR_NODE", releaseNodePath);
+                } else {
+                    Environment.SetEnvironmentVariable("MIMI_OCR_NODE", releaseElectronPath);
+                }
+
+                var releasePsi = new ProcessStartInfo {
+                    FileName = releaseElectronPath,
+                    Arguments = "\"" + releaseAppDir + "\"",
+                    WorkingDirectory = releaseAppDir,
+                    UseShellExecute = false
+                };
+                Process.Start(releasePsi);
+                return;
+            }
+
+            // 開発時は bin フォルダから実行される前提
+            string projectRoot = Path.GetFullPath(Path.Combine(exeDir, ".."));
 
             // node_modules が未インストールの場合はメッセージを表示して終了
             if (!Directory.Exists(Path.Combine(projectRoot, "node_modules"))) {

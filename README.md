@@ -23,9 +23,9 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 ## 動作環境
 
 - Windows x64 / macOS 推奨
-- Node.js / npm
-- `npm install` が通るローカル環境
-- `ndlocr-lite` を使う場合は Python 3.10 以上
+- 開発環境: Node.js / npm と `npm install` が通るローカル環境
+- Windows リリースパッケージ利用時: Node.js / npm は不要
+- `ndlocr-lite` を使う場合は Python 3.10 以上（初回利用時にアプリ標準の保存先へ GitHub から自動取得）
 - macOS で無音カットや音声変換を使う場合は ffmpeg（例: `brew install ffmpeg`）
 - Windowsランチャーを小さく作る場合は MinGW-w64 の `gcc` / `windres`
 - MinGW-w64 がない環境で Windows EXE ビルドを行う場合は .NET 10 SDK
@@ -54,7 +54,17 @@ npm run gui
 
 ファイルをドラッグアンドドロップして OCR や音声認識を実行できます。
 
-法匪モードは同梱テンプレートを使います。ndlocr-lite は未設定なら初回使用時に `.mimi-tools/` へ自動準備します。ffmpeg は Windows では自動準備し、macOS では Homebrew などで入れたものを使います。
+法匪モードは同梱テンプレートを使います。ndlocr-lite は未設定なら初回使用時にアプリ標準の保存先へ GitHub から自動準備します。ffmpeg は Windows では自動準備し、macOS では Homebrew などで入れたものを使います。
+
+## Windows リリースパッケージ
+
+開発環境で次を実行すると、Node.js / npm が入っていない Windows でも起動できるフォルダを `release/mimi-ocr-win-x64/` に作ります。
+
+```powershell
+npm run build:release:windows
+```
+
+配布時は `release/mimi-ocr-win-x64/` フォルダごと渡します。利用者は `mimi-ocr.exe` を起動します。
 
 ## CLI の使い方
 
@@ -207,7 +217,7 @@ OCR 直後の Markdown 末尾には、HTMLコメントとして設定メタデ�
       "end": 12,
       "total": 12
     },
-    "ndlocr": "off"
+    "ndlocr": "pre"
   }
 }
 -->

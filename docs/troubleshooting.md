@@ -39,6 +39,18 @@ Copy-Item config.template.json config.json
 - モデル名を標準値から変えたい場合は、GUIの設定または `config.json` の `providers.gemini.chatModel` で上書きする
 - もしくは環境変数 `GEMINI_CHAT_MODEL` を設定する
 
+## Gemini APIキーが未設定
+
+症状:
+
+- GUIで Gemini を使う処理を開始すると、APIキー設定の案内が出る
+- `API Key not found` と表示される
+
+対処:
+
+- GUI上部の「APIキー」を開き、Google AI Studio の APIキー作成ページへ進む
+- 作成したキーを「設定」→「config.json」→「Gemini APIキー」に貼り付けて保存する
+
 ## `OpenAI API Key not found in config.json`
 
 原因:
@@ -71,7 +83,7 @@ Copy-Item config.template.json config.json
 
 - `python --version` で Python 3.10 以上を起動できることを確認する
 - インターネット接続を確認して再実行する
-- `.mimi-tools/ndlocr-lite` が壊れている場合は、そのフォルダを削除して再実行する
+- GUIでは初回利用時にアプリ標準の保存先へ自動準備する。壊れている場合は、その保存先の `ndlocr-lite` フォルダを削除して再実行する
 
 ## 既存ファイルがあるためスキップされる
 

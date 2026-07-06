@@ -45,6 +45,16 @@ static void show_message(const wchar_t *title, const wchar_t *message, UINT icon
     MessageBoxW(NULL, message, title, MB_OK | icon);
 }
 
+static int is_directory(const wchar_t *path) {
+    DWORD attrs = GetFileAttributesW(path);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+static int is_file(const wchar_t *path) {
+    DWORD attrs = GetFileAttributesW(path);
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR command_line, int show_command) {
     (void)instance;
     (void)previous_instance;
@@ -52,9 +62,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
     (void)show_command;
 
     wchar_t exe_path[32768];
-    wchar_t bin_dir[32768];
+    wchar_t exe_dir[32768];
     wchar_t project_root[32768];
     wchar_t node_modules_path[32768];
+    wchar_t release_app_dir[32768];
+    wchar_t release_electron_path[32768];
+    wchar_t release_node_path[32768];
+    wchar_t release_main_path[32768];
     wchar_t system_dir[MAX_PATH];
     wchar_t cmd_path[MAX_PATH];
     wchar_t process_command[32768];
@@ -65,13 +79,83 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
         return 1;
     }
 
-    wcscpy(bin_dir, exe_path);
-    if (!remove_last_path_component(bin_dir)) {
-        show_message(APP_TITLE L" エラー", L"bin フォルダを解決できませんでした。", MB_ICONERROR);
+    wcscpy(exe_dir, exe_path);
+    if (!remove_last_path_component(exe_dir)) {
+        show_message(APP_TITLE L" エラー", L"実行フォルダを解決できませんでした。", MB_ICONERROR);
         return 1;
     }
 
-    wcscpy(project_root, bin_dir);
+    SetEnvironmentVariableW(L"ELECTRON_RUN_AS_NODE", NULL);
+
+    if (!join_path(release_app_dir, sizeof(release_app_dir) / sizeof(release_app_dir[0]), exe_dir, L"app") ||
+        !join_path(release_electron_path, sizeof(release_electron_path) / sizeof(release_electron_path[0]), exe_dir, L"runtime\\electron\\electron.exe") ||
+        !join_path(release_node_path, sizeof(release_node_path) / sizeof(release_node_path[0]), exe_dir, L"runtime\\node\\node.exe") ||
+        !join_path(release_main_path, sizeof(release_main_path) / sizeof(release_main_path[0]), release_app_dir, L"dist\\src\\gui\\main.js")) {
+        show_message(APP_TITLE L" エラー", L"リリース版のパスが長すぎます。", MB_ICONERROR);
+        return 1;
+    }
+
+    if (is_directory(release_app_dir) && is_file(release_electron_path) && is_file(release_main_path)) {
+        SetEnvironmentVariableW(L"MIMI_OCR_PROJECT_ROOT", release_app_dir);
+        SetEnvironmentVariableW(L"MIMI_OCR_RELEASE", L"1");
+        if (is_file(release_node_path)) {
+            SetEnvironmentVariableW(L"MIMI_OCR_NODE", release_node_path);
+        } else {
+            SetEnvironmentVariableW(L"MIMI_OCR_NODE", release_electron_path);
+        }
+
+        if (swprintf(
+                process_command,
+                sizeof(process_command) / sizeof(process_command[0]),
+                L"\"%ls\" \"%ls\"",
+                release_electron_path,
+                release_app_dir
+            ) <= 0) {
+            show_message(APP_TITLE L" エラー", L"起動コマンドを組み立てられませんでした。", MB_ICONERROR);
+            return 1;
+        }
+
+        STARTUPINFOW release_startup_info;
+        PROCESS_INFORMATION release_process_info;
+        ZeroMemory(&release_startup_info, sizeof(release_startup_info));
+        ZeroMemory(&release_process_info, sizeof(release_process_info));
+        release_startup_info.cb = sizeof(release_startup_info);
+        release_startup_info.dwFlags = STARTF_USESHOWWINDOW;
+        release_startup_info.wShowWindow = SW_SHOWNORMAL;
+
+        BOOL release_ok = CreateProcessW(
+            NULL,
+            process_command,
+            NULL,
+            NULL,
+            FALSE,
+            0,
+            NULL,
+            release_app_dir,
+            &release_startup_info,
+            &release_process_info
+        );
+
+        if (!release_ok) {
+            wchar_t message[1024];
+            swprintf(
+                message,
+                sizeof(message) / sizeof(message[0]),
+                L"同梱 Electron の起動に失敗しました。\n\n"
+                L"リリースパッケージを展開し直してください。\n\n"
+                L"Win32 エラー: %lu",
+                GetLastError()
+            );
+            show_message(APP_TITLE L" エラー", message, MB_ICONERROR);
+            return 1;
+        }
+
+        CloseHandle(release_process_info.hThread);
+        CloseHandle(release_process_info.hProcess);
+        return 0;
+    }
+
+    wcscpy(project_root, exe_dir);
     if (!remove_last_path_component(project_root)) {
         show_message(APP_TITLE L" エラー", L"プロジェクトフォルダを解決できませんでした。", MB_ICONERROR);
         return 1;
@@ -82,8 +166,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
         return 1;
     }
 
-    DWORD attrs = GetFileAttributesW(node_modules_path);
-    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    if (!is_directory(node_modules_path)) {
         wchar_t message[32768];
         swprintf(
             message,

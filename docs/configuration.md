@@ -88,6 +88,7 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 | `target` | 任意 | `general` または `houhi` |
 | `mode` | 任意 | `sync` または `batch` |
 | `batchSize` | 任意 | PDF の処理ページ数 |
+| `ndlocr` | 任意 | PDF OCR で `ndlocr-lite` を併用するか。`pre` / `only` / `off`。既定は `pre` |
 | `preferPdfText` | 任意 | 埋め込みテキストがあるPDFでOCRより抽出テキストを優先するか |
 | `autoRename` | 任意 | OCR後に内容からファイル名を自動生成するか |
 | `skipFormattedRename` | 任意 | 既に自動改名形式のファイルは再判定せずスキップするか。既定は `false` |
@@ -114,11 +115,15 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 
 ### ffmpeg
 
-ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffmpeg` を探し、Windowsでは見つからなければ `.mimi-tools/ffmpeg` に自動取得します。macOS では Homebrew などで入れた `ffmpeg` / `ffprobe` を使います。
+ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffmpeg` を探し、Windowsでは見つからなければ外部ツール保存先の `ffmpeg` フォルダに自動取得します。macOS では Homebrew などで入れた `ffmpeg` / `ffprobe` を使います。
+
+### `tools.rootDir`
+
+`ndlocr-lite` や Windows 版 ffmpeg など、自動準備する外部ツールの保存先です。空欄なら開発環境では `.mimi-tools/`、Windows リリース版ではユーザーデータ配下の `tools/` を使います。GUI では初回の `ndlocr-lite` 利用時に既定の保存先へ自動準備します。保存先を固定したい場合だけ、この値を指定します。
 
 ### `tools.ndlocrLite`
 
-`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。標準値は `app.defaults.json` にあります。プログラム本体は `.mimi-tools/ndlocr-lite` に自動取得し、専用Python環境も `.mimi-tools/ndlocr-lite-venv` に作ります。
+`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。標準値は `app.defaults.json` にあります。プログラム本体は外部ツール保存先の `ndlocr-lite` に自動取得し、専用Python環境も同じ保存先の `ndlocr-lite-venv` に作ります。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |

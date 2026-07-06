@@ -9,6 +9,10 @@ config.json
 *.batch_state.txt
 .mimi-tools/
 
+# ビルド・リリース生成物
+release/
+.tmp-*/
+
 # .NET ランチャービルド
 platforms/windows/launcher/bin/
 platforms/windows/launcher/obj/
@@ -29,3 +33,10 @@ Desktop.ini
 .vs/
 *.user
 *.suo
+
+# AIエージェント用ローカルガイド（git管理外）
+.agents/
+.claude/
+.codex/
+AGENTS.md
+CLAUDE.md

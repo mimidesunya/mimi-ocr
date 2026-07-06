@@ -20,7 +20,8 @@
     "transcribe": "npm run build && node dist/src/transcribe_audio.js",
     "build:launcher": "node scripts/build_launcher.js",
     "build:launcher:windows": "node platforms/windows/build_launcher.js",
-    "build:launcher:mac": "node platforms/macos/build_launcher.js"
+    "build:launcher:mac": "node platforms/macos/build_launcher.js",
+    "build:release:windows": "node scripts/build_windows_release.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.67.0",

@@ -17,6 +17,7 @@
     "target": "general",
     "mode": "sync",
     "batchSize": 4,
+    "ndlocr": "pre",
     "preferPdfText": false,
     "autoRename": false,
     "skipFormattedRename": false
@@ -39,6 +40,7 @@
     }
   },
   "tools": {
+    "rootDir": "",
     "ndlocrLite": {
       "parallelJobs": "auto",
       "pageChunkSize": 8,

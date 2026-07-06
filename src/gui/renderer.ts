@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const configCancelBtn = document.getElementById('configCancelBtn') as HTMLButtonElement;
     const configSaveBtn   = document.getElementById('configSaveBtn') as HTMLButtonElement;
     const configReloadBtn = document.getElementById('configReloadBtn') as HTMLButtonElement;
+    const cfgToolsRootBrowseBtn = document.getElementById('cfgToolsRootBrowseBtn') as HTMLButtonElement;
     const configStatus    = document.getElementById('configStatus') as HTMLElement;
     const configPathLabel = document.getElementById('configPathLabel') as HTMLElement;
     const configTabBtns   = document.querySelectorAll<HTMLElement>('[data-config-tab]');
@@ -77,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentAudioModel = 'gemini:gemini-3.5-flash';
     let currentAiProvider = 'gemini';
     let currentProcessMode = 'sync';
-    let currentOcrMode = 'ai';       // ai | ndlocr_ai | ndlocr_only
+    let currentOcrMode = 'ndlocr_ai'; // ai | ndlocr_ai | ndlocr_only
     let currentPreferPdfText = false;
     let currentAutoRename = false;
     let currentSkipFormattedRename = false;
@@ -91,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let loadedConfig: any = null;
     let loadedUserConfig: any = {};
     let loadedDefaults: any = {};
-    const GUI_STATE_KEY = 'mimi-ocr-gui-state-v1';
+    const GUI_STATE_KEY = 'mimi-ocr-gui-state-v2';
 
     const isOcrTool = (key: string) => key === 'ocr';
     const isAudioTool = (key: string) => key === 'transcribe_audio';
@@ -131,7 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     title: '主な設定',
                     items: [
                         '出力は、ふつうの文章なら「一般」、裁判資料の形に寄せるなら「法匪」を選びます。',
-                        'OCRは、通常は「AIのみ」で十分です。古い印刷物や読みにくいPDFは「ndlocr+AI」を試します。',
+                        'OCRは、既定では「ndlocr+AI」を使います。テキスト主体のPDFでは「AIのみ」も選べます。',
                         'AIは、速さや料金を重視するならGemini、必要に応じてClaudeやOpenAIを選びます。',
                         'バッチは大量ページ向けです。止まりやすいときは「同期」に戻します。'
                     ]
@@ -440,6 +441,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const claude = providers.claude || {};
         const ndlocrLite = config?.tools?.ndlocrLite || {};
         const stitchEngine = config?.tools?.stitchEngine || {};
+        const toolsRootDir = config?.tools?.rootDir || '';
 
         setInputValue('cfgGeminiApiKey', gemini.apiKey || '');
         setInputValue('cfgGeminiChatModel', gemini.chatModel || 'gemini-2.5-flash-preview');
@@ -450,6 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgClaudeApiKey', claude.apiKey || '');
         setInputValue('cfgClaudeChatModel', claude.chatModel || 'claude-opus-4-8');
 
+        setInputValue('cfgToolsRootDir', toolsRootDir);
         setInputValue('cfgNdlocrParallelJobs', ndlocrLite.parallelJobs || 'auto');
         setInputValue('cfgNdlocrPageChunkSize', positiveInt(ndlocrLite.pageChunkSize, 8, 1, 200));
         setInputValue('cfgNdlocrImageDpi', positiveInt(ndlocrLite.imageDpi, 300, 72, 600));
@@ -463,6 +466,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const previousUser = isPlainObject(loadedUserConfig) ? loadedUserConfig : {};
         const defaultProviders = defaults.providers || {};
         const defaultTools = defaults.tools || {};
+        const previousTools = isPlainObject(previousUser.tools) ? previousUser.tools : {};
 
         const config: any = {
             providers: {},
@@ -518,6 +522,15 @@ document.addEventListener('DOMContentLoaded', () => {
             jpegQuality: positiveNumber(inputValue('cfgStitchJpegQuality'), 0.86, 0.1, 0.98),
         };
         const tools: any = {};
+        Object.entries(previousTools).forEach(([key, value]) => {
+            if (key !== 'rootDir' && key !== 'ndlocrLite' && key !== 'stitchEngine') {
+                tools[key] = value;
+            }
+        });
+        const toolsRootDir = inputValue('cfgToolsRootDir');
+        if (toolsRootDir && toolsRootDir !== (defaultTools.rootDir || '')) {
+            tools.rootDir = toolsRootDir;
+        }
         if (!deepEqual(ndlocrLite, defaultTools.ndlocrLite || {})) {
             tools.ndlocrLite = ndlocrLite;
         }
@@ -592,6 +605,26 @@ document.addEventListener('DOMContentLoaded', () => {
     configCancelBtn.addEventListener('click', handleConfigCloseClick);
     configSaveBtn.addEventListener('click', saveConfigFromModal);
     configReloadBtn.addEventListener('click', loadConfigIntoModal);
+    cfgToolsRootBrowseBtn.addEventListener('click', async () => {
+        try {
+            const result = await (window as any).electronAPI.chooseToolsRoot({
+                title: '外部ツールの保存先を選択'
+            });
+            if (!result?.success) {
+                setConfigStatus('保存先の選択をキャンセルしました。');
+                return;
+            }
+            setInputValue('cfgToolsRootDir', result.toolsRoot || '');
+            if (result.userConfig) {
+                loadedUserConfig = result.userConfig;
+                loadedConfig = mergeConfig(loadedDefaults || {}, loadedUserConfig || {});
+            }
+            configPathLabel.textContent = result.configPath || configPathLabel.textContent;
+            setConfigStatus('外部ツールの保存先を保存しました。', 'success');
+        } catch (err: any) {
+            setConfigStatus(`保存先を選べませんでした: ${err.message}`, 'error');
+        }
+    });
     toolHelpCloseBtn.addEventListener('click', closeToolHelpModal);
     toolHelpOkBtn.addEventListener('click', closeToolHelpModal);
 
@@ -1169,6 +1202,62 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function currentTaskNeedsGemini() {
+        if (currentScript === 'transcribe_audio') {
+            return parseAudioModel(currentAudioModel).provider === 'gemini';
+        }
+        if (currentScript !== 'ocr') return false;
+        const ndlocrOnly = currentOcrMode === 'ndlocr_only';
+        return currentAiProvider === 'gemini' && (!ndlocrOnly || currentAutoRename);
+    }
+
+    function currentTaskNeedsNdlocr() {
+        return currentScript === 'ocr' && (currentOcrMode === 'ndlocr_ai' || currentOcrMode === 'ndlocr_only');
+    }
+
+    async function ensureSetupBeforeExecute() {
+        let status: any = null;
+        try {
+            status = await (window as any).electronAPI.getSetupStatus();
+        } catch (err: any) {
+            log(`セットアップ状態を確認できませんでした: ${err.message}`, 'error');
+            return false;
+        }
+
+        if (currentTaskNeedsGemini() && !status?.hasGeminiApiKey) {
+            log('Gemini APIキーが未設定です。APIキーを作成し、設定の Gemini APIキーへ貼って保存してください。', 'error');
+            log('Google AI Studio の APIキー作成ページは「APIキーの取り方」タブから開けます。');
+            await openConfigModal('keys');
+            setConfigStatus('Gemini APIキーを作成し、config.json タブの Gemini APIキー欄へ貼って保存してください。', 'error');
+            return false;
+        }
+
+        if (currentTaskNeedsNdlocr() && !status?.ndlocrInstalled) {
+            log('ndlocr-lite が未準備です。アプリ標準の保存先へ自動準備します。');
+            let result: any = null;
+            try {
+                result = await (window as any).electronAPI.prepareNdlocrRoot();
+            } catch (err: any) {
+                log(`ndlocr-lite の保存先を準備できませんでした: ${err.message}`, 'error');
+                return false;
+            }
+            if (!result?.success) {
+                log('ndlocr-lite の準備をキャンセルしました。', 'error');
+                return false;
+            }
+            if (result.userConfig) {
+                loadedUserConfig = result.userConfig;
+                loadedConfig = isPlainObject(loadedDefaults) && Object.keys(loadedDefaults).length > 0
+                    ? mergeConfig(loadedDefaults || {}, loadedUserConfig || {})
+                    : null;
+            }
+            log(`ndlocr-lite の保存先: ${result.toolsRoot}`);
+            log('このあと GitHub から ndlocr-lite を自動取得します。初回だけ時間がかかります。');
+        }
+
+        return true;
+    }
+
     async function executeWith(files: string[]) {
         log(`${files.length} 個のファイルを処理中 (${currentScript})...`);
 
@@ -1222,6 +1311,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const audioOptions = parseAudioModel(currentAudioModel);
 
+        if (!await ensureSetupBeforeExecute()) {
+            return;
+        }
+
         setLoading(true);
         try {
             const result = await (window as any).electronAPI.executeScript(
@@ -1252,6 +1345,10 @@ document.addEventListener('DOMContentLoaded', () => {
             );
             if (result.success) {
                 log('処理が正常に完了しました。', 'success');
+            } else if (result.setupRequired === 'gemini-api-key') {
+                log(result.message || 'Gemini APIキーが未設定です。', 'error');
+                await openConfigModal('keys');
+                setConfigStatus('Gemini APIキーを作成し、config.json タブの Gemini APIキー欄へ貼って保存してください。', 'error');
             } else {
                 log(`処理失敗 (コード: ${result.code})`, 'error');
             }

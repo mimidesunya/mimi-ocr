@@ -71,6 +71,13 @@ function normalizeProvider(value) {
     return ['gemini', 'claude', 'openai'].includes(provider) ? provider : 'gemini';
 }
 
+function normalizeNdlocrMode(value) {
+    const mode = String(value || '').toLowerCase().replace(/-/g, '_');
+    if (['pre', 'ndlocr', 'ndlocr_ai', 'on', 'true'].includes(mode)) return 'pre';
+    if (['only', 'ndlocr_only'].includes(mode)) return 'only';
+    return 'off';
+}
+
 function buildHouhiStyle(contextFilePath, contextText = '') {
     // 指定がなければ内蔵テンプレートを使用
     const templatePath = contextFilePath
@@ -118,8 +125,9 @@ async function main() {
     let showPrompt = false;
     let aiProvider = normalizeProvider(ocrConfig.provider);
     let processMode = normalizeMode(ocrConfig.mode);
-    let useNdlocr = false;
-    let ndlocrOnly = false;
+    const defaultNdlocrMode = normalizeNdlocrMode(ocrConfig.ndlocr);
+    let useNdlocr = defaultNdlocrMode === 'pre' || defaultNdlocrMode === 'only';
+    let ndlocrOnly = defaultNdlocrMode === 'only';
     let preferPdfText = ocrConfig.preferPdfText === true;
     let autoRename = ocrConfig.autoRename === true;
     let skipFormattedRename = ocrConfig.skipFormattedRename === true;
@@ -137,8 +145,9 @@ async function main() {
         else if (args[i] === "--show_prompt") showPrompt = true;
         else if (args[i] === "--ai") aiProvider = normalizeProvider(args[++i]);
         else if (args[i] === "--mode") processMode = normalizeMode(args[++i]);
-        else if (args[i] === "--ndlocr") useNdlocr = true;
-        else if (args[i] === "--ndlocr_only") ndlocrOnly = true;
+        else if (args[i] === "--ndlocr") { useNdlocr = true; ndlocrOnly = false; }
+        else if (args[i] === "--ndlocr_only") { useNdlocr = true; ndlocrOnly = true; }
+        else if (args[i] === "--no_ndlocr" || args[i] === "--no-ndlocr") { useNdlocr = false; ndlocrOnly = false; }
         else if (args[i] === "--prefer_pdf_text") preferPdfText = true;
         else if (args[i] === "--auto_rename") autoRename = true;
         else if (args[i] === "--no_auto_rename") autoRename = false;
@@ -184,6 +193,7 @@ async function main() {
         console.log(`   --mode batch|sync        処理モード（現在の既定: ${processMode}）`);
         console.log("   --ndlocr                 ndlocr-lite を前処理に使用");
         console.log("   --ndlocr_only            ndlocr のみで処理（PDF のみ）");
+        console.log("   --no_ndlocr              既定設定の ndlocr-lite 併用を無効化");
         console.log("   --prefer_pdf_text        埋め込みテキストを OCR より優先");
         console.log("   --auto_rename            AIによる自動ファイル名変更を有効化");
         console.log("   --skip_formatted_rename  形式済みファイルの自動改名をスキップ");
