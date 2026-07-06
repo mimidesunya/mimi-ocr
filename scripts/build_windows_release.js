@@ -4,6 +4,8 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 
 const repoRoot = path.resolve(__dirname, '..');
+const packageJson = require(path.join(repoRoot, 'package.json'));
+const packageVersion = String(process.env.MIMI_RELEASE_VERSION || packageJson.version || '').trim();
 const releaseRoot = path.resolve(process.env.MIMI_RELEASE_DIR || path.join(repoRoot, 'release', 'mimi-ocr-win-x64'));
 const appDir = path.join(releaseRoot, 'app');
 const runtimeDir = path.join(releaseRoot, 'runtime');
@@ -160,9 +162,14 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+function sanitizeFilePart(value) {
+  return String(value || '').replace(/[^0-9A-Za-z._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 function writeReadme() {
   const text = [
     'MIMI OCR Windows リリースパッケージ',
+    packageVersion ? `バージョン: ${packageVersion}` : '',
     '',
     '起動:',
     '  mimi-ocr.exe をダブルクリックしてください。',
@@ -181,7 +188,8 @@ function writeReadme() {
 function buildZipArchive() {
   const timestamp = process.env.MIMI_RELEASE_TIMESTAMP || formatTimestamp();
   const releaseName = path.basename(releaseRoot);
-  const zipPath = path.join(path.dirname(releaseRoot), `${releaseName}-${timestamp}.zip`);
+  const versionPart = packageVersion ? `${sanitizeFilePart(packageVersion)}-` : '';
+  const zipPath = path.join(path.dirname(releaseRoot), `${releaseName}-${versionPart}${timestamp}.zip`);
   assertSafeReleasePath(zipPath);
 
   console.log(`[release] Building zip: ${zipPath}`);

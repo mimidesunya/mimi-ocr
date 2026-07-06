@@ -1,6 +1,6 @@
 {
   "name": "mimi-ocr",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "日本語文書 OCR ツール（Gemini / Claude / OpenAI 対応）",
   "main": "dist/src/gui/main.js",
   "packageManager": "npm@11.12.1",
