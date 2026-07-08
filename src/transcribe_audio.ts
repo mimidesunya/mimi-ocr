@@ -2,7 +2,7 @@
  * 音声ファイルを発言者分離つき Markdown に変換します。
  *
  * 使い方:
- *   node src/transcribe_audio.js --target=general|houhi --provider=openai|gemini --mode=sync|batch --model=MODEL <音声ファイル...>
+ *   node src/transcribe_audio.js --target=general|houhi --provider=openai|gemini|reazon-k2 --mode=sync|batch --model=MODEL <音声ファイル...>
  */
 const fs = require('fs');
 const os = require('os');
@@ -25,7 +25,7 @@ const {
     parseTimestamp,
     formatTimestamp,
 } = require('./lib/audio_silence');
-const { resolveFfmpegTools } = require('./lib/tool_resolver');
+const { resolveFfmpegTools, resolveReazonK2 } = require('./lib/tool_resolver');
 
 const SUPPORTED_AUDIO_EXTENSIONS = new Set([
     '.mp3',
@@ -43,6 +43,7 @@ const SUPPORTED_AUDIO_EXTENSIONS = new Set([
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-transcribe-diarize';
 const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+const DEFAULT_REAZON_K2_MODEL = 'ja';
 const DEFAULT_PROVIDER = 'gemini';
 const DEFAULT_TARGET = 'general';
 const OPENAI_MAX_AUDIO_BYTES = 25 * 1024 * 1024;
@@ -51,6 +52,9 @@ const GEMINI_FETCH_MAX_RETRIES = 3;
 const GEMINI_CHUNK_TARGET_BYTES = 16 * 1024 * 1024;
 const GEMINI_CHUNK_MAX_DURATION_SEC = 10 * 60;
 const GEMINI_CHUNK_MIN_DURATION_SEC = 2 * 60;
+const REAZON_K2_DEFAULT_CHUNK_SEC = 25;
+const REAZON_K2_MIN_CHUNK_SEC = 5;
+const REAZON_K2_MAX_CHUNK_SEC = 120;
 const TRANSCRIPT_NAMING_EXCERPT_CHARS = 2000;
 const TRANSCRIPT_AUTO_RENAME_PATTERN = /^\d{4}-\d{2}-\d{2}_(?:音声認識|反訳書)_.+$/;
 
@@ -70,7 +74,9 @@ type TranscriptionOptions = {
     autoRename: boolean;
     skipFormattedRename: boolean;
     contextText: string;
+    postprocessAi: string;
     silenceTrim: Record<string, any>;
+    reazonK2: Record<string, any>;
     openaiApiKey?: string;
     openaiBaseUrl?: string;
     openaiChatModel?: string;
@@ -143,6 +149,42 @@ function parseArgs(argv: string[]) {
             options.contextFile = arg.slice('--context-file='.length).trim();
         } else if (arg === '--context-file') {
             options.contextFile = readValue('--context-file');
+        } else if (arg.startsWith('--postprocess-ai=')) {
+            options.postprocessAi = arg.slice('--postprocess-ai='.length).trim();
+        } else if (arg === '--postprocess-ai' || arg === '--postprocess_ai') {
+            options.postprocessAi = readValue(arg);
+        } else if (arg.startsWith('--postprocess_ai=')) {
+            options.postprocessAi = arg.slice('--postprocess_ai='.length).trim();
+        } else if (arg.startsWith('--reazon-language=')) {
+            options.reazonLanguage = arg.slice('--reazon-language='.length).trim();
+        } else if (arg === '--reazon-language' || arg === '--reazon_language') {
+            options.reazonLanguage = readValue(arg);
+        } else if (arg.startsWith('--reazon_language=')) {
+            options.reazonLanguage = arg.slice('--reazon_language='.length).trim();
+        } else if (arg.startsWith('--reazon-device=')) {
+            options.reazonDevice = arg.slice('--reazon-device='.length).trim();
+        } else if (arg === '--reazon-device' || arg === '--reazon_device') {
+            options.reazonDevice = readValue(arg);
+        } else if (arg.startsWith('--reazon_device=')) {
+            options.reazonDevice = arg.slice('--reazon_device='.length).trim();
+        } else if (arg.startsWith('--reazon-precision=')) {
+            options.reazonPrecision = arg.slice('--reazon-precision='.length).trim();
+        } else if (arg === '--reazon-precision' || arg === '--reazon_precision') {
+            options.reazonPrecision = readValue(arg);
+        } else if (arg.startsWith('--reazon_precision=')) {
+            options.reazonPrecision = arg.slice('--reazon_precision='.length).trim();
+        } else if (arg.startsWith('--reazon-chunk-sec=')) {
+            options.reazonChunkSec = arg.slice('--reazon-chunk-sec='.length).trim();
+        } else if (arg === '--reazon-chunk-sec' || arg === '--reazon_chunk_sec') {
+            options.reazonChunkSec = readValue(arg);
+        } else if (arg.startsWith('--reazon_chunk_sec=')) {
+            options.reazonChunkSec = arg.slice('--reazon_chunk_sec='.length).trim();
+        } else if (arg.startsWith('--reazon-python=')) {
+            options.reazonPython = arg.slice('--reazon-python='.length).trim();
+        } else if (arg === '--reazon-python' || arg === '--reazon_python') {
+            options.reazonPython = readValue(arg);
+        } else if (arg.startsWith('--reazon_python=')) {
+            options.reazonPython = arg.slice('--reazon_python='.length).trim();
         } else if (arg === '--trim_silence' || arg === '--trim-silence') {
             options.trimSilence = true;
         } else if (arg === '--no_trim_silence' || arg === '--no-trim-silence') {
@@ -170,7 +212,38 @@ function parseArgs(argv: string[]) {
 }
 
 function normalizeProvider(value: any) {
-    return String(value || '').toLowerCase() === 'gemini' ? 'gemini' : 'openai';
+    const text = String(value || '').toLowerCase().trim();
+    if (text === 'gemini') return 'gemini';
+    if (text === 'reazon' || text === 'reazon-k2' || text === 'reazonspeech' || text === 'sherpa' || text === 'sherpa-onnx') {
+        return 'reazon-k2';
+    }
+    return 'openai';
+}
+
+function normalizePostprocessAi(value: any) {
+    const text = String(value || '').toLowerCase().trim();
+    if (text === 'gemini') return 'gemini';
+    if (text === 'openai') return 'openai';
+    if (text === 'off' || text === 'none' || text === 'false' || text === 'no') return 'off';
+    return 'auto';
+}
+
+function normalizeReazonLanguage(value: any) {
+    const text = String(value || '').toLowerCase().trim();
+    if (text === 'ja-en' || text === 'ja-en-mls-5k') return text;
+    return 'ja';
+}
+
+function normalizeReazonDevice(value: any) {
+    const text = String(value || '').toLowerCase().trim();
+    if (text === 'cuda' || text === 'coreml') return text;
+    return 'cpu';
+}
+
+function normalizeReazonPrecision(value: any) {
+    const text = String(value || '').toLowerCase().trim();
+    if (text === 'int8' || text === 'int8-fp32') return text;
+    return 'fp32';
 }
 
 function normalizeContextText(cliOptions: Record<string, string | boolean>, transcription: Record<string, any>) {
@@ -211,6 +284,7 @@ function normalizeOptions(cliOptions: Record<string, string | boolean>): Transcr
     const transcription = config.transcription || {};
     const openai = getProviderConfig('openai') || {};
     const gemini = getProviderConfig('gemini') || {};
+    const reazonK2Config = config.tools?.reazonK2 || {};
     const provider = normalizeProvider(cliOptions.provider || transcription.provider || DEFAULT_PROVIDER);
     const target = normalizeTarget(cliOptions.target || transcription.target || DEFAULT_TARGET);
     const language = String(cliOptions.language || transcription.language || 'ja');
@@ -222,7 +296,10 @@ function normalizeOptions(cliOptions: Record<string, string | boolean>): Transcr
         : transcription.skipFormattedRename === true;
     const providerModel = provider === 'gemini'
         ? gemini.transcriptionModel || DEFAULT_GEMINI_MODEL
-        : openai.transcriptionModel || DEFAULT_OPENAI_MODEL;
+        : provider === 'reazon-k2'
+            ? transcription.reazonLanguage || reazonK2Config.language || DEFAULT_REAZON_K2_MODEL
+            : openai.transcriptionModel || DEFAULT_OPENAI_MODEL;
+    const reazonLanguage = normalizeReazonLanguage(cliOptions.reazonLanguage || cliOptions.model || transcription.reazonLanguage || reazonK2Config.language || providerModel);
 
     return {
         provider,
@@ -234,7 +311,19 @@ function normalizeOptions(cliOptions: Record<string, string | boolean>): Transcr
         autoRename,
         skipFormattedRename,
         contextText: normalizeContextText(cliOptions, transcription),
+        postprocessAi: normalizePostprocessAi(cliOptions.postprocessAi || transcription.postprocessAi || 'auto'),
         silenceTrim: normalizeSilenceTrimOptions(cliOptions, transcription, config),
+        reazonK2: {
+            language: reazonLanguage,
+            device: normalizeReazonDevice(cliOptions.reazonDevice || transcription.reazonDevice || reazonK2Config.device || 'cpu'),
+            precision: normalizeReazonPrecision(cliOptions.reazonPrecision || transcription.reazonPrecision || reazonK2Config.precision || 'fp32'),
+            chunkSeconds: parseNumberOption(cliOptions.reazonChunkSec || transcription.reazonChunkSec || reazonK2Config.chunkSeconds, REAZON_K2_DEFAULT_CHUNK_SEC, REAZON_K2_MIN_CHUNK_SEC, REAZON_K2_MAX_CHUNK_SEC),
+            pythonPath: String(cliOptions.reazonPython || reazonK2Config.pythonPath || '').trim(),
+            basePythonPath: String(reazonK2Config.basePythonPath || '').trim(),
+            autoInstall: reazonK2Config.autoInstall !== false,
+            cacheDir: String(reazonK2Config.cacheDir || '').trim(),
+            packageSpec: String(reazonK2Config.packageSpec || '').trim(),
+        },
         openaiApiKey: openai.apiKey || process.env.OPENAI_API_KEY,
         openaiBaseUrl: openai.baseUrl || 'https://api.openai.com/v1/chat/completions',
         openaiChatModel: openai.chatModel || 'gpt-4o',
@@ -312,6 +401,70 @@ async function fetchWithRetry(label: string, requestFactory: () => Promise<Respo
         await sleep(1500 * attempt);
     }
     throw new Error(`${label} failed after ${maxRetries} attempts: ${lastError?.message || String(lastError || 'unknown error')}`);
+}
+
+function defaultModelForProvider(provider: string) {
+    if (provider === 'gemini') return DEFAULT_GEMINI_MODEL;
+    if (provider === 'reazon-k2') return DEFAULT_REAZON_K2_MODEL;
+    return DEFAULT_OPENAI_MODEL;
+}
+
+function selectTextAiProvider(options: TranscriptionOptions) {
+    if (options.provider === 'openai') return options.openaiApiKey ? 'openai' : '';
+    if (options.provider === 'gemini') return options.geminiApiKey ? 'gemini' : '';
+
+    const preference = normalizePostprocessAi(options.postprocessAi);
+    if (preference === 'off') return '';
+    if (preference === 'gemini') return options.geminiApiKey ? 'gemini' : '';
+    if (preference === 'openai') return options.openaiApiKey ? 'openai' : '';
+    if (options.geminiApiKey) return 'gemini';
+    if (options.openaiApiKey) return 'openai';
+    return '';
+}
+
+async function requestTextAiJson(prompt: string, options: TranscriptionOptions, label: string, preferredProvider = '') {
+    const provider = preferredProvider || selectTextAiProvider(options);
+    if (provider === 'openai') {
+        const response = await fetchWithRetry(`OpenAI ${label}`, () => fetch(options.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${options.openaiApiKey}`,
+            },
+            body: JSON.stringify({
+                model: options.openaiChatModel || 'gpt-4o',
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.1,
+                response_format: { type: 'json_object' },
+            }),
+        }));
+        const body = await response.text();
+        if (!response.ok) throw new Error(`OpenAI ${label} failed: ${response.status} ${body}`);
+        const json = JSON.parse(body);
+        return json?.choices?.[0]?.message?.content || '';
+    }
+
+    if (provider === 'gemini') {
+        const model = options.geminiChatModel || 'gemini-2.5-flash-preview';
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(options.geminiApiKey || '')}`;
+        const response = await fetchWithRetry(`Gemini ${label}`, () => fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: {
+                    temperature: 0.1,
+                    responseMimeType: 'application/json',
+                },
+            }),
+        }));
+        const body = await response.text();
+        if (!response.ok) throw new Error(`Gemini ${label} failed: ${response.status} ${body}`);
+        const json = JSON.parse(body);
+        return json?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('') || '';
+    }
+
+    return '';
 }
 
 async function getFfmpegPathForTranscription(options: TranscriptionOptions) {
@@ -392,6 +545,197 @@ async function createGeminiAudioChunks(filePath: string, options: TranscriptionO
     };
 }
 
+async function createReazonAudioChunks(filePath: string, options: TranscriptionOptions) {
+    const durationSec = await getAudioDurationSeconds(filePath, options.silenceTrim);
+    const chunkSeconds = parseNumberOption(options.reazonK2?.chunkSeconds, REAZON_K2_DEFAULT_CHUNK_SEC, REAZON_K2_MIN_CHUNK_SEC, REAZON_K2_MAX_CHUNK_SEC);
+    const ffmpeg = await getFfmpegPathForTranscription(options);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-ocr-reazon-k2-'));
+    const chunks: any[] = [];
+
+    const ranges: { startSec: number; durationSec: number }[] = [];
+    if (durationSec && durationSec > 0) {
+        for (let startSec = 0; startSec < durationSec - 0.05; startSec += chunkSeconds) {
+            ranges.push({ startSec, durationSec: Math.min(chunkSeconds, durationSec - startSec) });
+        }
+    } else {
+        ranges.push({ startSec: 0, durationSec: 0 });
+    }
+
+    try {
+        for (let i = 0; i < ranges.length; i++) {
+            const range = ranges[i];
+            const chunkPath = path.join(tempDir, `reazon-${String(i + 1).padStart(4, '0')}.wav`);
+            const args = [
+                '-y',
+                '-hide_banner',
+                '-nostdin',
+                '-ss', range.startSec.toFixed(3),
+            ];
+            if (range.durationSec > 0) {
+                args.push('-t', range.durationSec.toFixed(3));
+            }
+            args.push(
+                '-i', filePath,
+                '-vn',
+                '-ac', '1',
+                '-ar', '16000',
+                '-c:a', 'pcm_s16le',
+                chunkPath,
+            );
+            await runProcess(ffmpeg, args);
+            chunks.push({
+                audioPath: chunkPath,
+                startSec: range.startSec,
+                durationSec: range.durationSec,
+                bytes: fs.existsSync(chunkPath) ? fs.statSync(chunkPath).size : 0,
+                temporary: true,
+            });
+        }
+    } catch (err) {
+        for (const chunk of chunks) removeFileQuietly(chunk.audioPath);
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_cleanupError) {}
+        throw err;
+    }
+
+    return {
+        chunks,
+        cleanup: () => {
+            for (const chunk of chunks) removeFileQuietly(chunk.audioPath);
+            try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_err) {}
+        },
+    };
+}
+
+const REAZON_K2_RUNNER = String.raw`
+import argparse
+import json
+import sys
+import warnings
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+from reazonspeech.k2.asr import load_model, transcribe, audio_from_path
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--precision", default="fp32")
+    parser.add_argument("--language", default="ja")
+    parser.add_argument("audio", nargs="+")
+    args = parser.parse_args()
+
+    model = load_model(device=args.device, precision=args.precision, language=args.language)
+    chunks = []
+    for audio_path in args.audio:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            audio = audio_from_path(audio_path)
+            result = transcribe(model, audio)
+        chunks.append({
+            "path": audio_path,
+            "text": result.text,
+            "subwords": [
+                {"time": float(item.seconds), "token": item.token}
+                for item in getattr(result, "subwords", [])
+            ],
+            "warnings": [str(item.message) for item in caught],
+        })
+
+    print(json.dumps({"chunks": chunks}, ensure_ascii=True))
+
+if __name__ == "__main__":
+    main()
+`;
+
+function writeTempReazonRunner() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-reazon-runner-'));
+    const scriptPath = path.join(dir, 'run_reazon_k2.py');
+    fs.writeFileSync(scriptPath, REAZON_K2_RUNNER, 'utf-8');
+    return {
+        scriptPath,
+        cleanup: () => {
+            try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_err) {}
+        },
+    };
+}
+
+function runProcessWithEnv(command: string, args: string[], env: Record<string, string>): Promise<any> {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, { windowsHide: true, env });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', data => { stdout += data.toString(); });
+        child.stderr.on('data', data => { stderr += data.toString(); });
+        child.on('error', reject);
+        child.on('close', code => {
+            if (code === 0) {
+                resolve({ stdout, stderr });
+            } else {
+                reject(new Error(`${path.basename(command)} failed (${code}): ${stderr || stdout}`));
+            }
+        });
+    });
+}
+
+function parseReazonK2RunnerOutput(stdout: any) {
+    const text = String(stdout || '').trim();
+    const parsed = extractJson(text);
+    if (parsed !== null) return parsed;
+    try {
+        return JSON.parse(text);
+    } catch (err: any) {
+        throw new Error(`Reazon K2 のJSON出力を解析できませんでした。Pythonの標準出力にJSON以外のログが混ざったか、文字エンコーディングが壊れています: ${err?.message || String(err)}`);
+    }
+}
+
+async function runReazonK2(chunks: any[], options: TranscriptionOptions) {
+    const resolved = await resolveReazonK2(options.reazonK2 || {});
+    const runner = writeTempReazonRunner();
+    const env = {
+        ...process.env,
+        HF_HOME: process.env.HF_HOME || resolved.cacheDir,
+        HUGGINGFACE_HUB_CACHE: process.env.HUGGINGFACE_HUB_CACHE || path.join(resolved.cacheDir, 'hub'),
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1',
+    };
+    try {
+        const args = [
+            runner.scriptPath,
+            '--device', options.reazonK2?.device || 'cpu',
+            '--precision', options.reazonK2?.precision || 'fp32',
+            '--language', options.reazonK2?.language || DEFAULT_REAZON_K2_MODEL,
+            ...chunks.map(chunk => chunk.audioPath),
+        ];
+        const result = await runProcessWithEnv(resolved.pythonPath, args, env as Record<string, string>);
+        if (String(result.stderr || '').trim()) {
+            console.warn(`[Reazon K2] ${String(result.stderr).trim()}`);
+        }
+        const parsed = parseReazonK2RunnerOutput(result.stdout);
+        return Array.isArray(parsed?.chunks) ? parsed.chunks : [];
+    } finally {
+        runner.cleanup();
+    }
+}
+
+function buildReazonRawItems(chunks: any[], results: any[]): TranscriptItem[] {
+    return chunks.map((chunk, index) => {
+        const result = results[index] || {};
+        const text = String(result.text || '').trim();
+        if (Array.isArray(result.warnings)) {
+            result.warnings.filter(Boolean).forEach((message: string) => console.warn(`[Reazon K2] ${message}`));
+        }
+        return {
+            speaker: '話者1',
+            time: formatTimestamp(chunk.startSec || 0, (chunk.startSec || 0) >= 3600),
+            text: text || '【文字起こし結果が空です】',
+        };
+    }).filter(item => item.text && item.text !== '【文字起こし結果が空です】');
+}
+
 function offsetTranscriptItems(items: TranscriptItem[] = [], offsetSec = 0) {
     if (!offsetSec) return items;
     return items.map(item => {
@@ -415,20 +759,36 @@ function mergeOverview(base: Record<string, string> = {}, next: Record<string, s
 
 function summarizeAudioChunking(preprocess: Record<string, any>) {
     const chunks = preprocess?.geminiChunks;
-    if (!Array.isArray(chunks) || chunks.length === 0) {
-        return { applied: false };
+    if (Array.isArray(chunks) && chunks.length > 0) {
+        return {
+            applied: true,
+            engine: 'gemini',
+            count: chunks.length,
+            targetBytes: GEMINI_CHUNK_TARGET_BYTES,
+            maxDurationSec: GEMINI_CHUNK_MAX_DURATION_SEC,
+            chunks: chunks.map((chunk: any) => ({
+                startSec: Number(chunk.startSec.toFixed(3)),
+                durationSec: Number(chunk.durationSec.toFixed(3)),
+                bytes: chunk.bytes,
+            })),
+        };
     }
-    return {
-        applied: true,
-        count: chunks.length,
-        targetBytes: GEMINI_CHUNK_TARGET_BYTES,
-        maxDurationSec: GEMINI_CHUNK_MAX_DURATION_SEC,
-        chunks: chunks.map((chunk: any) => ({
-            startSec: Number(chunk.startSec.toFixed(3)),
-            durationSec: Number(chunk.durationSec.toFixed(3)),
-            bytes: chunk.bytes,
-        })),
-    };
+
+    const reazonChunks = preprocess?.reazonK2Chunks;
+    if (Array.isArray(reazonChunks) && reazonChunks.length > 0) {
+        return {
+            applied: true,
+            engine: 'reazon-k2',
+            count: reazonChunks.length,
+            chunks: reazonChunks.map((chunk: any) => ({
+                startSec: Number(chunk.startSec.toFixed(3)),
+                durationSec: Number(chunk.durationSec.toFixed(3)),
+                bytes: chunk.bytes,
+            })),
+        };
+    }
+
+    return { applied: false };
 }
 
 function pad2(value: number) {
@@ -759,45 +1119,9 @@ function parseTranscriptNamingTitle(text: string, markdownText: string) {
 async function inferTranscriptTitleWithAi(markdownText: string, options: TranscriptionOptions) {
     const prompt = buildTranscriptNamingPrompt(markdownText, options.target);
     try {
-        if (options.provider === 'openai' && options.openaiApiKey) {
-            const response = await fetchWithRetry('OpenAI transcript naming request', () => fetch(options.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${options.openaiApiKey}`,
-                },
-                body: JSON.stringify({
-                    model: options.openaiChatModel || 'gpt-4o',
-                    messages: [{ role: 'user', content: prompt }],
-                    temperature: 0.1,
-                    response_format: { type: 'json_object' },
-                }),
-            }));
-            const body = await response.text();
-            if (!response.ok) throw new Error(`OpenAI naming failed: ${response.status} ${body}`);
-            const json = JSON.parse(body);
-            const content = json?.choices?.[0]?.message?.content || '';
-            return parseTranscriptNamingTitle(content, markdownText);
-        }
-
-        if (options.geminiApiKey) {
-            const model = options.geminiChatModel || 'gemini-2.5-flash-preview';
-            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(options.geminiApiKey)}`;
-            const response = await fetchWithRetry('Gemini transcript naming request', () => fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                    generationConfig: {
-                        temperature: 0.1,
-                        responseMimeType: 'application/json',
-                    },
-                }),
-            }));
-            const body = await response.text();
-            if (!response.ok) throw new Error(`Gemini naming failed: ${response.status} ${body}`);
-            const json = JSON.parse(body);
-            const content = json?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('') || '';
+        const provider = selectTextAiProvider(options);
+        if (provider) {
+            const content = await requestTextAiJson(prompt, options, 'transcript naming request', provider);
             return parseTranscriptNamingTitle(content, markdownText);
         }
     } catch (err: any) {
@@ -1177,6 +1501,61 @@ function buildTranscriptPrompt(fileName: string, language: string, target = DEFA
     ].filter(Boolean).join('\n\n');
 }
 
+function buildTranscriptPostprocessPrompt(fileName: string, items: TranscriptItem[], options: TranscriptionOptions) {
+    const isHouhi = normalizeTarget(options.target) === 'houhi';
+    const trimmedContext = String(options.contextText || '').trim();
+    return [
+        '# ROLE',
+        '日本語のローカル音声認識結果を、Markdown化に使う構造化JSONへ整えるアシスタントです。',
+        '',
+        '# TASK',
+        'ReazonSpeech K2 / sherpa-onnx の文字起こし結果を読み、発言単位に整形してください。',
+        '出力はJSONのみです。Markdownや説明文は出力しないでください。',
+        '',
+        '# OUTPUT FORMAT',
+        '{"overview":{"date":"","place":"","people":"","title":""},"items":[{"speaker":"話者1","time":"00:00","text":"発言内容"}]}',
+        '',
+        '# RULES',
+        '- 入力にない発言、日付、氏名、事件名、話者名、結論を創作しないでください。',
+        '- 誤字修正、句読点、文区切り、明らかな表記ゆれ修正は行って構いません。',
+        '- 音声認識の内容を要約しないでください。発言内容はできるだけ全文に近く保持してください。',
+        '- time は元の chunk time を基準に MM:SS または HH:MM:SS で入れてください。',
+        '- 話者が分からない場合は 話者1 のままにしてください。',
+        '- 複数話者が文脈から明確な場合だけ、話者1, 話者2 または役職名へ分けてください。',
+        isHouhi ? '- 裁判期日らしい場合でも、原告、被告、裁判官などの役割は発言内容から明確な場合だけ使ってください。無理に創作しないでください。' : '',
+        trimmedContext ? `- 次の事前コンテキストは、聞こえた内容に合う場合だけ固有名詞・役職・呼称の補正に使ってください:\n${trimmedContext}` : '',
+        '',
+        `# AUDIO FILE\n${fileName}`,
+        '',
+        '# RAW CHUNKS JSON',
+        JSON.stringify(items.map(item => ({ time: item.time, text: item.text })), null, 2),
+    ].filter(Boolean).join('\n');
+}
+
+async function postprocessTranscriptWithAi(filePath: string, rawItems: TranscriptItem[], options: TranscriptionOptions) {
+    const provider = selectTextAiProvider(options);
+    if (!provider || options.postprocessAi === 'off') {
+        return { items: rawItems, overview: {} };
+    }
+
+    const prompt = buildTranscriptPostprocessPrompt(path.basename(filePath), rawItems, options);
+    try {
+        console.log(`[Reazon K2] AI後処理: ${provider}`);
+        const content = await requestTextAiJson(prompt, options, 'transcript postprocess request', provider);
+        const json = extractJson(content) || (() => {
+            try { return JSON.parse(String(content || '').trim()); } catch (_err) { return null; }
+        })();
+        const items = normalizeTranscriptItems(json);
+        if (items.length > 0) {
+            return { items, overview: json?.overview || {} };
+        }
+        console.warn('[Reazon K2] AI後処理の結果から発言項目を読めなかったため、生起こしを使います。');
+    } catch (err: any) {
+        console.warn(`[Reazon K2] AI後処理に失敗したため、生起こしを使います: ${err?.message || String(err)}`);
+    }
+    return { items: rawItems, overview: {} };
+}
+
 function buildTranscriptMarkdown(filePath: string, items: TranscriptItem[], overview: Record<string, string> = {}, target = DEFAULT_TARGET) {
     return normalizeTarget(target) === 'houhi'
         ? buildHouhiTranscriptMarkdown(filePath, items, overview)
@@ -1199,6 +1578,13 @@ function buildTranscriptionSettingsComment(sourcePath: string, options: Transcri
             autoRename: options.autoRename,
             skipFormattedRename: options.skipFormattedRename,
             context: options.contextText ? 'provided' : 'none',
+            postprocessAi: options.provider === 'reazon-k2' ? options.postprocessAi : undefined,
+            reazonK2: options.provider === 'reazon-k2' ? {
+                language: options.reazonK2?.language,
+                device: options.reazonK2?.device,
+                precision: options.reazonK2?.precision,
+                chunkSeconds: options.reazonK2?.chunkSeconds,
+            } : undefined,
             silenceTrim: summarizeSilenceTrim(preprocess),
             audioChunking: summarizeAudioChunking(preprocess),
         },
@@ -1420,6 +1806,27 @@ async function transcribeWithGemini(filePath: string, options: TranscriptionOpti
     };
 }
 
+async function transcribeWithReazonK2(filePath: string, options: TranscriptionOptions, preprocess: Record<string, any>) {
+    const chunkSet = await createReazonAudioChunks(filePath, options);
+    preprocess.reazonK2Chunks = chunkSet.chunks.map((chunk: any) => ({
+        startSec: chunk.startSec,
+        durationSec: chunk.durationSec,
+        bytes: chunk.bytes,
+    }));
+
+    try {
+        console.log(`[Reazon K2] ${chunkSet.chunks.length} チャンクをローカル音声認識します (language=${options.reazonK2?.language || DEFAULT_REAZON_K2_MODEL}, device=${options.reazonK2?.device || 'cpu'}, precision=${options.reazonK2?.precision || 'fp32'})`);
+        const results = await runReazonK2(chunkSet.chunks, options);
+        const rawItems = buildReazonRawItems(chunkSet.chunks, results);
+        if (rawItems.length === 0) {
+            return { items: [], overview: {} };
+        }
+        return await postprocessTranscriptWithAi(filePath, rawItems, options);
+    } finally {
+        chunkSet.cleanup?.();
+    }
+}
+
 async function transcribeAudio(filePath: string, options: TranscriptionOptions) {
     if (options.provider === 'gemini') return transcribeWithGemini(filePath, options);
     if (options.provider === 'openai') return transcribeWithOpenAI(filePath, options);
@@ -1428,6 +1835,10 @@ async function transcribeAudio(filePath: string, options: TranscriptionOptions) 
 
 async function transcribePreparedAudio(preprocess: Record<string, any>, options: TranscriptionOptions) {
     const audioPath = preprocess.audioPath;
+    if (options.provider === 'reazon-k2') {
+        return transcribeWithReazonK2(audioPath, options, preprocess);
+    }
+
     if (options.provider !== 'gemini' || fs.statSync(audioPath).size <= GEMINI_INLINE_MAX_AUDIO_BYTES) {
         return transcribeAudio(audioPath, options);
     }
@@ -1466,10 +1877,11 @@ function printUsage() {
     console.log(' 音声ファイルを Markdown に変換します。');
     console.log('');
     console.log(' 使い方:');
-    console.log('   node transcribe_audio.js --target=general|houhi --provider=openai|gemini --mode=sync|batch --batch_size=N --model=MODEL <音声ファイル...>');
+    console.log('   node transcribe_audio.js --target=general|houhi --provider=openai|gemini|reazon-k2 --mode=sync|batch --batch_size=N --model=MODEL <音声ファイル...>');
     console.log('');
     console.log(' オプション: --auto_rename / --no_auto_rename / --skip_formatted_rename / --context-text <text> / --context-file <path>');
     console.log('           --trim_silence / --no_trim_silence / --silence_threshold_db=N / --min_silence_sec=N / --silence_padding_sec=N');
+    console.log('           Reazon K2: --postprocess-ai=auto|gemini|openai|off / --reazon-language=ja|ja-en|ja-en-mls-5k / --reazon-device=cpu|cuda|coreml / --reazon-precision=fp32|int8|int8-fp32 / --reazon-chunk-sec=N');
     console.log(' 既存Markdownがある場合はOCRと同様にスキップし、--auto_rename 指定時は改名だけ実行します。');
     console.log(' 対応拡張子: ' + Array.from(SUPPORTED_AUDIO_EXTENSIONS).join(', '));
     console.log('-------------------------------------------------------');
@@ -1573,9 +1985,12 @@ async function processAudioFiles(files: string[], options: TranscriptionOptions,
     }
 
     let ok = true;
-    const effectiveBatchSize = options.provider === 'gemini' ? 1 : options.batchSize;
+    const effectiveBatchSize = (options.provider === 'gemini' || options.provider === 'reazon-k2') ? 1 : options.batchSize;
     if (options.provider === 'gemini' && options.batchSize > effectiveBatchSize) {
         console.log(`[情報] Gemini音声認識は大容量アップロード安定化のため、実処理は1件ずつ行います`);
+    }
+    if (options.provider === 'reazon-k2' && options.batchSize > effectiveBatchSize) {
+        console.log(`[情報] Reazon K2音声認識はモデルメモリ節約のため、実処理は1件ずつ行います`);
     }
     for (let i = 0; i < files.length; i += effectiveBatchSize) {
         const chunk = files.slice(i, i + effectiveBatchSize);
@@ -1601,9 +2016,12 @@ async function main() {
     }
 
     const options = normalizeOptions(cliOptions);
-    const model = options.model || (options.provider === 'gemini' ? DEFAULT_GEMINI_MODEL : DEFAULT_OPENAI_MODEL);
+    const model = options.model || defaultModelForProvider(options.provider);
     console.log(`[情報] 音声認識プロバイダー: ${options.provider}`);
     console.log(`[情報] モデル: ${model}`);
+    if (options.provider === 'reazon-k2') {
+        console.log(`[情報] Reazon K2: language=${options.reazonK2.language} / device=${options.reazonK2.device} / precision=${options.reazonK2.precision} / chunk=${options.reazonK2.chunkSeconds}s / AI後処理=${options.postprocessAi}`);
+    }
     console.log(`[情報] 出力形式: ${options.target === 'houhi' ? '法匪' : '一般'}`);
     console.log(`[情報] モード: ${options.mode === 'batch' ? `バッチ (サイズ ${options.batchSize})` : '同期'}`);
     console.log(`[情報] 自動改名: ${options.autoRename ? 'On' : 'Off'}`);

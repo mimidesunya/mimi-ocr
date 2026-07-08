@@ -25,6 +25,11 @@ const FALLBACK_APP_DEFAULTS = {
         batchSize: 4,
         autoRename: false,
         skipFormattedRename: false,
+        postprocessAi: 'auto',
+        reazonLanguage: 'ja',
+        reazonDevice: 'cpu',
+        reazonPrecision: 'fp32',
+        reazonChunkSec: 25,
         silenceTrim: {
             enabled: false,
             thresholdDb: -35,
@@ -46,6 +51,16 @@ const FALLBACK_APP_DEFAULTS = {
             deskew: 'auto',
             pdfImageFormat: 'jpeg',
             jpegQuality: 0.86
+        },
+        reazonK2: {
+            pythonPath: '',
+            basePythonPath: '',
+            language: 'ja',
+            device: 'cpu',
+            precision: 'fp32',
+            chunkSeconds: 25,
+            autoInstall: true,
+            cacheDir: ''
         }
     }
 };

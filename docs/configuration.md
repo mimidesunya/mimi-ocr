@@ -95,17 +95,22 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 
 ### `transcription`
 
-音声認識 CLI の既定値です。通常は `app.defaults.json` 側に置き、ユーザーごとに変えたい場合だけ `config.json` で上書きします。モデル名とAPIキーは `providers.openai` / `providers.gemini` から読みます。
+音声認識 CLI の既定値です。通常は `app.defaults.json` 側に置き、ユーザーごとに変えたい場合だけ `config.json` で上書きします。Gemini / OpenAI のモデル名とAPIキーは `providers.openai` / `providers.gemini` から読みます。ReazonSpeech K2 は `tools.reazonK2` のPython環境を使います。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
-| `provider` | 任意 | `gemini` または `openai`。既定は `gemini` |
+| `provider` | 任意 | `gemini`、`openai`、`reazon-k2`。既定は `gemini` |
 | `language` | 任意 | 音声認識の言語。既定は `ja` |
 | `target` | 任意 | `general` または `houhi` |
 | `mode` | 任意 | `sync` または `batch` |
 | `batchSize` | 任意 | `batch` 時に同時処理する音声ファイル数 |
 | `autoRename` | 任意 | 文字起こし内容から音声ファイル本体と出力Markdown名を自動生成するか |
 | `skipFormattedRename` | 任意 | 既に自動改名形式の音声ファイルは再判定せずスキップするか。既定は `false` |
+| `postprocessAi` | 任意 | Reazon K2 の生起こしをAIで整えるか。`auto` / `gemini` / `openai` / `off` |
+| `reazonLanguage` | 任意 | Reazon K2 の言語。`ja` / `ja-en` / `ja-en-mls-5k` |
+| `reazonDevice` | 任意 | Reazon K2 の実行デバイス。`cpu` / `cuda` / `coreml` |
+| `reazonPrecision` | 任意 | Reazon K2 の精度。`fp32` / `int8` / `int8-fp32` |
+| `reazonChunkSec` | 任意 | Reazon K2 に渡す音声チャンク秒数。既定は `25` |
 | `silenceTrim.enabled` | 任意 | AIへ渡す前に無音区間をカットするか |
 | `silenceTrim.thresholdDb` | 任意 | 無音判定のしきい値 dB |
 | `silenceTrim.minSilenceSec` | 任意 | 無音とみなす最短秒数 |
@@ -137,6 +142,23 @@ ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffm
 - `pageChunkSize` は既定で `8` です。
 - `imageDpi` は既定で `300` です。大容量PDFでメモリ不足が出る場合は `200` 前後まで下げると安定しやすくなります。
 - 自動取得にはインターネット接続と Python 3.10 以上が必要です。
+
+### `tools.reazonK2`
+
+`--provider=reazon-k2` で使う ReazonSpeech K2 / sherpa-onnx の設定です。標準値は `app.defaults.json` にあります。未指定の場合は外部ツール保存先に `reazon-k2-venv` を作り、`reazonspeech.k2.asr` と `sherpa-onnx` を自動インストールします。モデル本体は ReazonSpeech 側の Hugging Face 設定に従って取得され、既定では外部ツール保存先の `huggingface/` をキャッシュとして使います。
+
+| キー | 必須 | 説明 |
+| --- | --- | --- |
+| `pythonPath` | 任意 | 準備済みPythonを使う場合のパス。指定時は自動インストールしません |
+| `basePythonPath` | 任意 | 自動 venv 作成に使うベースPython |
+| `language` | 任意 | `ja` / `ja-en` / `ja-en-mls-5k` |
+| `device` | 任意 | `cpu` / `cuda` / `coreml` |
+| `precision` | 任意 | `fp32` / `int8` / `int8-fp32` |
+| `chunkSeconds` | 任意 | Reazon K2 へ渡すチャンク秒数。既定は `25` |
+| `autoInstall` | 任意 | 未準備時に venv とパッケージを自動準備するか。既定は `true` |
+| `cacheDir` | 任意 | Hugging Face キャッシュの保存先 |
+
+Reazon K2 はローカルASRなので、`--postprocess-ai=off` なら音声内容をAI APIへ送りません。`auto` / `gemini` / `openai` を選ぶと、ローカルASR結果のテキストだけをAIへ渡し、話者、句読点、反訳書用JSONへ整えます。
 
 ### `tools.stitchEngine`
 

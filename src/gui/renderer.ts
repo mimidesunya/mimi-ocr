@@ -160,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 {
                     title: '主な設定',
                     items: [
-                        '音声AIは、GeminiかOpenAIを選びます。',
+                        '音声AIは、Gemini、OpenAI、Reazon K2を選びます。',
                         '出力は、ふつうの議事録なら「一般」、反訳書風にしたいなら「法匪」を選びます。',
                         '無音カットをOnにすると、長い沈黙を先に短くしてからAIへ送ります。'
                     ]
@@ -441,6 +441,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const claude = providers.claude || {};
         const ndlocrLite = config?.tools?.ndlocrLite || {};
         const stitchEngine = config?.tools?.stitchEngine || {};
+        const reazonK2 = config?.tools?.reazonK2 || {};
         const toolsRootDir = config?.tools?.rootDir || '';
 
         setInputValue('cfgGeminiApiKey', gemini.apiKey || '');
@@ -459,6 +460,11 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgStitchImageDpi', stitchEngine.imageDpi === 'auto' ? 'auto' : positiveInt(stitchEngine.imageDpi, 300, 72, 600));
         setInputValue('cfgStitchPdfImageFormat', pdfImageFormat(stitchEngine.pdfImageFormat));
         setInputValue('cfgStitchJpegQuality', positiveNumber(stitchEngine.jpegQuality, 0.86, 0.1, 0.98));
+        setInputValue('cfgReazonPythonPath', reazonK2.pythonPath || '');
+        setInputValue('cfgReazonLanguage', reazonK2.language || 'ja');
+        setInputValue('cfgReazonDevice', reazonK2.device || 'cpu');
+        setInputValue('cfgReazonPrecision', reazonK2.precision || 'fp32');
+        setInputValue('cfgReazonChunkSec', positiveNumber(reazonK2.chunkSeconds, 25, 5, 120));
     }
 
     function readConfigForm() {
@@ -521,9 +527,19 @@ document.addEventListener('DOMContentLoaded', () => {
             pdfImageFormat: pdfImageFormat(inputValue('cfgStitchPdfImageFormat')),
             jpegQuality: positiveNumber(inputValue('cfgStitchJpegQuality'), 0.86, 0.1, 0.98),
         };
+        const reazonK2 = {
+            pythonPath: inputValue('cfgReazonPythonPath'),
+            basePythonPath: '',
+            language: normalizeReazonLanguage(inputValue('cfgReazonLanguage')),
+            device: normalizeReazonDevice(inputValue('cfgReazonDevice')),
+            precision: normalizeReazonPrecision(inputValue('cfgReazonPrecision')),
+            chunkSeconds: positiveNumber(inputValue('cfgReazonChunkSec'), 25, 5, 120),
+            autoInstall: true,
+            cacheDir: '',
+        };
         const tools: any = {};
         Object.entries(previousTools).forEach(([key, value]) => {
-            if (key !== 'rootDir' && key !== 'ndlocrLite' && key !== 'stitchEngine') {
+            if (key !== 'rootDir' && key !== 'ndlocrLite' && key !== 'stitchEngine' && key !== 'reazonK2') {
                 tools[key] = value;
             }
         });
@@ -536,6 +552,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (!deepEqual(stitchEngine, defaultTools.stitchEngine || {})) {
             tools.stitchEngine = stitchEngine;
+        }
+        if (!deepEqual(reazonK2, defaultTools.reazonK2 || {})) {
+            tools.reazonK2 = reazonK2;
         }
         if (Object.keys(tools).length > 0) {
             config.tools = tools;
@@ -1361,11 +1380,33 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function parseAudioModel(value: string) {
-        const [provider, model] = String(value || 'gemini:gemini-3.5-flash').split(':');
+        const [provider, model, postprocessAi] = String(value || 'gemini:gemini-3.5-flash').split(':');
+        if (provider === 'reazon-k2') {
+            return {
+                provider: 'reazon-k2',
+                model: normalizeReazonLanguage(model || 'ja'),
+                postprocessAi: postprocessAi || 'auto',
+            };
+        }
         return {
             provider: provider === 'gemini' ? 'gemini' : 'openai',
             model: model || (provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-4o-transcribe-diarize'),
         };
+    }
+
+    function normalizeReazonLanguage(value: string) {
+        const text = String(value || '').trim().toLowerCase();
+        return text === 'ja-en' || text === 'ja-en-mls-5k' ? text : 'ja';
+    }
+
+    function normalizeReazonDevice(value: string) {
+        const text = String(value || '').trim().toLowerCase();
+        return text === 'cuda' || text === 'coreml' ? text : 'cpu';
+    }
+
+    function normalizeReazonPrecision(value: string) {
+        const text = String(value || '').trim().toLowerCase();
+        return text === 'int8' || text === 'int8-fp32' ? text : 'fp32';
     }
 
     // ---- IPC ログ受信 ----

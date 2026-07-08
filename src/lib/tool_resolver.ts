@@ -11,6 +11,7 @@ const FFMPEG_ZIP_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essent
 const FFMPEG_SHA_URL = `${FFMPEG_ZIP_URL}.sha256`;
 const NDLOCR_RELEASE_API_URL = 'https://api.github.com/repos/ndl-lab/ndlocr-lite/releases/latest';
 const NDLOCR_SOURCE_FALLBACK_URL = 'https://github.com/ndl-lab/ndlocr-lite/archive/refs/heads/master.zip';
+const REAZON_K2_PACKAGE_SPEC = 'git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/k2-asr';
 
 function getToolsRoot() {
     const envDir = String(process.env.MIMI_TOOLS_DIR || '').trim();
@@ -437,8 +438,76 @@ async function resolveNdlocrLite(settings: any = {}) {
     return { repoPath, pythonPath };
 }
 
+function canImportReazonK2(pythonPath) {
+    const result = spawnSync(pythonPath, ['-c', 'import reazonspeech.k2.asr; import sherpa_onnx'], {
+        cwd: getToolsRoot(),
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false,
+    });
+    return !result.error && result.status === 0;
+}
+
+function ensureReazonK2Venv(settings: any = {}) {
+    const configuredPython = String(settings.pythonPath || '').trim();
+    if (configuredPython) {
+        if (!probePythonCommand(configuredPython)) {
+            throw new Error(`設定されたReazon K2用Pythonを起動できません: ${configuredPython}`);
+        }
+        if (!canImportReazonK2(configuredPython)) {
+            throw new Error('設定されたPythonには reazonspeech.k2.asr または sherpa_onnx が入っていません。pip install sherpa-onnx sherpa-onnx-bin と reazonspeech-k2-asr を入れるか、tools.reazonK2.pythonPath を空にして自動準備を使ってください。');
+        }
+        return configuredPython;
+    }
+
+    const venvDir = path.join(getToolsRoot(), 'reazon-k2-venv');
+    const venvPython = getVenvPythonPath(venvDir);
+    const autoInstall = settings.autoInstall !== false;
+
+    if (isExecutableFile(venvPython) && !probePythonCommand(venvPython)) {
+        console.warn('[tools] ReazonSpeech K2用のPython環境を起動できないため作り直します。');
+        fs.rmSync(venvDir, { recursive: true, force: true });
+    }
+
+    if (!isExecutableFile(venvPython)) {
+        console.log('[tools] ReazonSpeech K2用のPython環境を作ります。');
+        const python = resolveBasePythonCommand(String(settings.basePythonPath || ''));
+        runChecked(python.command, [...python.argsPrefix, '-m', 'venv', venvDir], getToolsRoot());
+    }
+
+    if (!canImportReazonK2(venvPython)) {
+        if (!autoInstall) {
+            throw new Error('ReazonSpeech K2 のPythonパッケージが未準備です。tools.reazonK2.autoInstall を true にするか、tools.reazonK2.pythonPath に準備済みPythonを指定してください。');
+        }
+        const packageSpec = String(settings.packageSpec || REAZON_K2_PACKAGE_SPEC).trim();
+        console.log('[tools] ReazonSpeech K2 / sherpa-onnx をPython環境へインストールします。初回だけ時間がかかります。');
+        runChecked(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip'], getToolsRoot());
+        runChecked(venvPython, ['-m', 'pip', 'install', 'sherpa-onnx', 'sherpa-onnx-bin'], getToolsRoot());
+        runChecked(venvPython, ['-m', 'pip', 'install', packageSpec], getToolsRoot());
+    }
+
+    if (!canImportReazonK2(venvPython)) {
+        throw new Error('ReazonSpeech K2 のPythonパッケージを読み込めませんでした。インストールログを確認してください。');
+    }
+    return venvPython;
+}
+
+async function resolveReazonK2(settings: any = {}) {
+    ensureDir(getToolsRoot());
+    const pythonPath = ensureReazonK2Venv(settings);
+    const cacheDir = String(settings.cacheDir || '').trim()
+        ? path.resolve(String(settings.cacheDir).trim())
+        : path.join(getToolsRoot(), 'huggingface');
+    ensureDir(cacheDir);
+    return {
+        pythonPath,
+        cacheDir,
+    };
+}
+
 module.exports = {
     getToolsRoot,
     resolveFfmpegTools,
     resolveNdlocrLite,
+    resolveReazonK2,
 };

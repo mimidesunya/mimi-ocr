@@ -413,11 +413,23 @@ ipcMain.handle('execute-script', async (event, {
         }
     } else if (isAudio) {
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
-        const provider = audioOptions?.provider === 'gemini' ? 'gemini' : 'openai';
-        const defaultModel = provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-4o-transcribe-diarize';
+        const provider = audioOptions?.provider === 'reazon-k2'
+            ? 'reazon-k2'
+            : audioOptions?.provider === 'gemini'
+                ? 'gemini'
+                : 'openai';
+        const defaultModel = provider === 'gemini'
+            ? 'gemini-3.5-flash'
+            : provider === 'reazon-k2'
+                ? 'ja'
+                : 'gpt-4o-transcribe-diarize';
         scriptArgs.push(`--target=${target}`);
         scriptArgs.push(`--provider=${provider}`);
         scriptArgs.push(`--model=${audioOptions?.model || defaultModel}`);
+        if (provider === 'reazon-k2') {
+            scriptArgs.push(`--postprocess-ai=${audioOptions?.postprocessAi || 'auto'}`);
+            scriptArgs.push(`--reazon-language=${audioOptions?.model || 'ja'}`);
+        }
         scriptArgs.push(`--mode=${processMode === 'batch' ? 'batch' : 'sync'}`);
         const bs = parseInt(batchSize, 10);
         if (!isNaN(bs) && bs > 0) {
@@ -517,13 +529,20 @@ ipcMain.handle('execute-script', async (event, {
         consoleWin.webContents.send('console-info', `ページ指定: ${pdfPageOptions?.pages || '(未指定)'} / 種別: ${pageTypeLabel} / ${twoUpLabel}`);
     } else if (isAudio) {
         const target = ocrTarget === 'houhi' ? '法匪' : '一般';
-        const provider = audioOptions?.provider === 'gemini' ? 'Gemini' : 'OpenAI';
+        const provider = audioOptions?.provider === 'reazon-k2'
+            ? 'Reazon K2'
+            : audioOptions?.provider === 'gemini'
+                ? 'Gemini'
+                : 'OpenAI';
+        const postprocessLabel = audioOptions?.provider === 'reazon-k2'
+            ? ` / AI後処理: ${audioOptions?.postprocessAi || 'auto'}`
+            : '';
         const modeLabel = processMode === 'batch' ? `バッチ (サイズ ${batchSize || 4})` : '同期';
         const renameLabel = autoRename === true ? 'On' : 'Off';
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
         const trimLabel = silenceTrim === true ? 'On' : 'Off';
         const contextLabel = context ? 'あり' : 'なし';
-        consoleWin.webContents.send('console-info', `音声認識: ${target} / ${provider} / モデル: ${audioOptions?.model || '(既定)'} / モード: ${modeLabel} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel} / 無音カット: ${trimLabel} / コンテキスト: ${contextLabel}`);
+        consoleWin.webContents.send('console-info', `音声認識: ${target} / ${provider} / モデル: ${audioOptions?.model || '(既定)'}${postprocessLabel} / モード: ${modeLabel} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel} / 無音カット: ${trimLabel} / コンテキスト: ${contextLabel}`);
     } else if (!isMerge && !isStitch) {
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         const ocrLabel = ndlocrOnly ? 'ndlocr-only' : (useNdlocr ? 'ndlocr+AI' : 'AIのみ');

@@ -8,6 +8,7 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 
 - PDF / Word / ODT / PowerPoint の Markdown 化
 - 音声ファイルの発言者分離つき Markdown / 反訳書化
+- ReazonSpeech K2 / sherpa-onnx によるローカル音声認識と AI 後処理
 - Gemini / Claude / OpenAI の切り替え
 - PDF での `ndlocr-lite` 併用
 - OCR 後のページ結合 (`*_paged.md` -> `*_merged.md`)
@@ -26,6 +27,7 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 - 開発環境: Node.js / npm と `npm install` が通るローカル環境
 - Windows リリースパッケージ利用時: Node.js / npm は不要
 - `ndlocr-lite` を使う場合は Python 3.10 以上（初回利用時にアプリ標準の保存先へ GitHub から自動取得）
+- ReazonSpeech K2 を使う場合は Python 3.10 以上（初回利用時に `reazonspeech.k2.asr` と `sherpa-onnx` を専用 venv へ自動準備）
 - macOS で無音カットや音声変換を使う場合は ffmpeg（例: `brew install ffmpeg`）
 - Windowsランチャーを小さく作る場合は MinGW-w64 の `gcc` / `windres`
 - MinGW-w64 がない環境で Windows EXE ビルドを行う場合は .NET 10 SDK
@@ -54,7 +56,7 @@ npm run gui
 
 ファイルをドラッグアンドドロップして OCR や音声認識を実行できます。
 
-法匪モードは同梱テンプレートを使います。ndlocr-lite は未設定なら初回使用時にアプリ標準の保存先へ GitHub から自動準備します。ffmpeg は Windows では自動準備し、macOS では Homebrew などで入れたものを使います。
+法匪モードは同梱テンプレートを使います。ndlocr-lite と ReazonSpeech K2 は未設定なら初回使用時にアプリ標準の保存先へ自動準備します。ffmpeg は Windows では自動準備し、macOS では Homebrew などで入れたものを使います。
 
 ## Windows リリースパッケージ
 
@@ -94,10 +96,14 @@ npm run merge -- <Markdownファイルまたはディレクトリ>
 ```powershell
 npm run transcribe -- .\meeting.m4a --target=houhi --provider=openai --model=gpt-4o-transcribe-diarize
 npm run transcribe -- .\meeting.wav --target=general --provider=gemini --model=gemini-3.5-flash
+npm run transcribe -- .\meeting.wav --provider=reazon-k2 --postprocess-ai=gemini
+npm run transcribe -- .\meeting.wav --provider=reazon-k2 --postprocess-ai=off
 npm run transcribe -- .\a.m4a .\b.m4a --mode=batch --batch_size=2 --auto_rename
 npm run transcribe -- .\meeting.m4a --context-text "登場人物: 田中、佐藤。専門用語: 反訳書。"
 npm run transcribe -- .\meeting.m4a --trim_silence
 ```
+
+`--provider=reazon-k2` は ReazonSpeech K2 / sherpa-onnx をローカルで実行し、既定では短いチャンクへ分割してから文字起こしします。`--postprocess-ai=auto|gemini|openai|off` で、ローカルASR結果をAIに渡して話者・句読点・反訳書形式へ整えるかを選べます。AI後処理を使わない場合はチャンク単位の生起こしから Markdown を作ります。
 
 ### 文書分割
 
@@ -176,6 +182,7 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 
 音声認識でも `--mode=batch` / `--batch_size` / `--auto_rename` を使えます。音声のバッチは複数ファイルの並列処理、自動改名は文字起こし内容から音声ファイル本体と出力Markdown名を同じ stem で作る機能です。
 `--context-text` または `--context-file` で、登場人物や固有名詞などの事前コンテキストも渡せます。
+ReazonSpeech K2 を使う場合は `--reazon-language=ja|ja-en|ja-en-mls-5k`、`--reazon-device=cpu|cuda|coreml`、`--reazon-precision=fp32|int8|int8-fp32`、`--reazon-chunk-sec=25` を指定できます。
 既存の音声認識 Markdown がある場合はAPI処理をスキップし、`--auto_rename` 指定時は既存 Markdown を使って音声ファイル本体と Markdown の改名だけを行います。
 この既存出力スキップと改名のみ実行は、OCRの既存 `_paged.md` スキップと同じ考え方です。
 `--trim_silence` を付けると、クライアント側で ffmpeg により無音区間をカットしてからAIへ渡します。出力時刻は元音声上の時刻へ補正され、Markdown末尾の不可視コメントに無音カット設定と削除区間の要約を残します。

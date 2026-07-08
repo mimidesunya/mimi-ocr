@@ -9,7 +9,10 @@
 3. [使い方](./usage.md)
 4. [設定ファイル](./configuration.md)
 5. [アーキテクチャ](./architecture.md)
-6. [トラブルシューティング](./troubleshooting.md)
+6. [テスト方針](./testing.md)
+7. [OCR品質ガイド](./ocr-quality-guide.md)
+8. [リリース方針](./release-policy.md)
+9. [トラブルシューティング](./troubleshooting.md)
 
 ## 何ができるか
 
@@ -22,6 +25,12 @@
 - OCR結果に基づくブランクページ除去（白紙ページを除いたPDF+MDペアを生成）
 - OCR結果に基づくPDFページ抽出・結合・2面割付
 - Electron GUI と CLI の両方から操作できる
+
+## 開発チーム運用
+
+- リポジトリ全体の作業ルールは [AGENTS.md](../AGENTS.md) にあります。
+- 仮想開発チームの役割定義は [docs/agents](./agents/README.md) にあります。
+- リリース前確認は [RELEASE_CHECKLIST.md](../RELEASE_CHECKLIST.md) を使います。
 
 ## 主な出力ファイル
 

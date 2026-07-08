@@ -20,6 +20,7 @@
 | `src/lib/claude_client.ts` | Claude SDK 連携 |
 | `src/lib/pdf_to_image.ts` | PDF を PNG にレンダリング |
 | `src/lib/ndlocr_runner.ts` | `ndlocr-lite` を子プロセス実行 |
+| `src/lib/tool_resolver.ts` | ffmpeg、`ndlocr-lite`、ReazonSpeech K2 用Python環境を解決 |
 | `scripts/write_build_info.js` | ビルド時に `dist/src/lib/build_info.json` を生成 |
 | `src/gui/main.ts` | Electron メインプロセス。GUI からCLIを起動 |
 | `src/gui/renderer.ts` | フロントエンドの状態管理とイベント処理 |
@@ -67,6 +68,10 @@
 | Claude | 対応 | 専用バッチなし | PDF を base64 document として送る |
 | OpenAI | 対応 | Files API + Batches API | 内部で PDF を PNG 群に変換して送る |
 
+## 音声認識フロー
+
+`src/transcribe_audio.ts` は OpenAI / Gemini へ音声を直接送る経路と、ReazonSpeech K2 / sherpa-onnx をローカル実行する経路を持ちます。Reazon K2 では ffmpeg で 16kHz mono WAV の短いチャンクへ変換し、Python 側で `reazonspeech.k2.asr` を呼び出します。AI後処理が有効な場合は、生起こしテキストを Gemini または OpenAI へ渡して発言単位JSONに整え、その後は既存の Markdown / 反訳書生成を使います。
+
 ## GUI 実行モデル
 
 1. Electron GUI でユーザーがオプションを選ぶ
@@ -93,7 +98,7 @@ GUI のツール一覧:
 | ツール | スクリプト | 説明 |
 | --- | --- | --- |
 | OCR | `src/ocr.js` | 一般文書または法匪書式の OCR 処理 |
-| 音声認識 | `src/transcribe_audio.js` | OpenAI / Gemini による発言者分離つき音声認識 |
+| 音声認識 | `src/transcribe_audio.js` | OpenAI / Gemini / Reazon K2 による音声認識 |
 | ページ結合 | `src/merge_pages.js` | ページマーカーの除去・結合 |
 | 文書分割 | `src/split_pages.js` | JSON 定義に基づく文書分割 |
 | 白紙除去 | `src/remove_blank_pages.js` | 白紙ページ除去した PDF + MD 生成 |

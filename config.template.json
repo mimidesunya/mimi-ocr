@@ -11,6 +11,17 @@
     }
   },
   "tools": {
-    "rootDir": ""
+    "rootDir": "",
+    "reazonK2": {
+      "pythonPath": "",
+      "device": "cpu",
+      "precision": "fp32",
+      "chunkSeconds": 25,
+      "autoInstall": true
+    }
+  },
+  "transcription": {
+    "postprocessAi": "auto",
+    "reazonLanguage": "ja"
   }
 }
