@@ -451,6 +451,8 @@ ipcMain.handle('execute-script', async (event, {
             scriptArgs.push('--ndlocr_only');
         } else if (useNdlocr) {
             scriptArgs.push('--ndlocr');
+        } else {
+            scriptArgs.push('--no_ndlocr');
         }
 
         // PDFテキスト優先

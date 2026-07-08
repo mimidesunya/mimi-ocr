@@ -933,6 +933,16 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
     let ndlocrOutDir = null;
     let tmpDir = null;
+    const cleanupNdlocrTempDir = () => {
+        if (!tmpDir || !fs.existsSync(tmpDir)) return;
+        try {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch (e) {
+            console.warn(`[警告] 一時ディレクトリの削除に失敗しました: ${e.message}`);
+            return;
+        }
+        tmpDir = null;
+    };
     if (useNdlocr && ndlocrTargetPages.length > 0) {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ndlocr_'));
         ndlocrOutDir = path.join(tmpDir, 'output');
@@ -1010,11 +1020,8 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             console.log(`[ndlocr] ndlocr-lite の処理が完了しました。`);
         } catch (err) {
             console.error(`[ndlocr エラー] ${err.message}`);
-            if (ndlocrOnly) {
-                throw err;
-            }
-            console.log(`[ndlocr] ndlocr-lite の結果なしで通常のAI OCRを続行します。`);
-            useNdlocr = false;
+            cleanupNdlocrTempDir();
+            throw new Error(`ndlocr-lite の実行に失敗しました。OCRモードの暗黙フォールバックは行いません: ${err.message}`);
         }
     } else if (useNdlocr && ndlocrTargetPages.length === 0) {
         console.log(`[ndlocr] すべての対象ページで埋め込みテキストを検出したため、ndlocr実行をスキップします。`);
@@ -1286,13 +1293,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         }
     }
 
-    if (tmpDir && fs.existsSync(tmpDir)) {
-        try {
-            fs.rmSync(tmpDir, { recursive: true, force: true });
-        } catch (e) {
-            console.warn(`[警告] 一時ディレクトリの削除に失敗しました: ${e.message}`);
-        }
-    }
+    cleanupNdlocrTempDir();
 
     if (hasError) {
         writeTextFileWithContext(errorPath, appendOcrSettingsComment(allMarkdown, pdfPath, 'pdf', {
