@@ -15,7 +15,7 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 - OCR 結果を使った PDF ページ抽出・結合・2面割付
 - GUI / CLI での分割スキャンPDFページ復元
 - OCR 結果末尾への不可視な実行設定メタデータ付与
-- 先頭4ページと末尾4ページを使った AI 自動ファイル名変更
+- 変更前のファイル名、先頭4ページ、末尾4ページを使った AI 自動ファイル名変更
 - OCR 結果に基づく文書分割（JSON 定義で複数ファイルに分割）
 - OCR 結果に基づくブランクページ除去（白紙ページを除いた PDF + MD ペアを生成）
 - 分割スキャンPDFのページ復元（重なり検出で複数スキャンを1ページへ結合）
@@ -180,7 +180,7 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 | `--prefer_pdf_text` | 埋め込みテキストを優先する |
 | `--auto_rename` | AI による自動ファイル名変更を有効にする |
 
-音声認識でも `--mode=batch` / `--batch_size` / `--auto_rename` を使えます。音声のバッチは複数ファイルの並列処理、自動改名は文字起こし内容から音声ファイル本体と出力Markdown名を同じ stem で作る機能です。
+音声認識でも `--mode=batch` / `--batch_size` / `--auto_rename` を使えます。音声のバッチは複数ファイルの並列処理、自動改名は変更前のファイル名と文字起こし内容を併せて判断し、音声ファイル本体と出力Markdown名を同じ stem で作る機能です。
 `--context-text` または `--context-file` で、登場人物や固有名詞などの事前コンテキストも渡せます。
 ReazonSpeech K2 を使う場合は `--reazon-language=ja|ja-en|ja-en-mls-5k`、`--reazon-device=cpu|cuda|coreml`、`--reazon-precision=fp32|int8|int8-fp32`、`--reazon-chunk-sec=25` を指定できます。
 既存の音声認識 Markdown がある場合はAPI処理をスキップし、`--auto_rename` 指定時は既存 Markdown を使って音声ファイル本体と Markdown の改名だけを行います。
@@ -232,7 +232,7 @@ OCR 直後の Markdown 末尾には、HTMLコメントとして設定メタデ�
 
 ## 自動ファイル名変更
 
-デフォルトでは Off です。必要な場合だけ `--auto_rename` を付けると、OCR結果の先頭4ページと末尾4ページから内容を判定し、元文書を次の形式に自動変更します。
+デフォルトでは Off です。必要な場合だけ `--auto_rename` を付けると、変更前のファイル名とOCR結果の先頭4ページ・末尾4ページを併せて判定し、元文書を次の形式に自動変更します。変更前のファイル名に日付、文書種類、証拠番号、表題などが含まれる場合は候補情報として使い、OCR本文と矛盾する場合は本文を優先します。
 
 ```text
 一般: YYYY-MM-DD_文書種類_タイトル

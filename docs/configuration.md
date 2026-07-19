@@ -90,7 +90,7 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 | `batchSize` | 任意 | PDF の処理ページ数 |
 | `ndlocr` | 任意 | PDF OCR で `ndlocr-lite` を併用するか。`pre` / `only` / `off`。既定は `pre` |
 | `preferPdfText` | 任意 | 埋め込みテキストがあるPDFでOCRより抽出テキストを優先するか |
-| `autoRename` | 任意 | OCR後に内容からファイル名を自動生成するか |
+| `autoRename` | 任意 | OCR後に変更前のファイル名と内容からファイル名を自動生成するか |
 | `skipFormattedRename` | 任意 | 既に自動改名形式のファイルは再判定せずスキップするか。既定は `false` |
 
 ### `transcription`
@@ -104,7 +104,7 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 | `target` | 任意 | `general` または `houhi` |
 | `mode` | 任意 | `sync` または `batch` |
 | `batchSize` | 任意 | `batch` 時に同時処理する音声ファイル数 |
-| `autoRename` | 任意 | 文字起こし内容から音声ファイル本体と出力Markdown名を自動生成するか |
+| `autoRename` | 任意 | 変更前のファイル名と文字起こし内容から音声ファイル本体と出力Markdown名を自動生成するか |
 | `skipFormattedRename` | 任意 | 既に自動改名形式の音声ファイルは再判定せずスキップするか。既定は `false` |
 | `postprocessAi` | 任意 | Reazon K2 の生起こしをAIで整えるか。`auto` / `gemini` / `openai` / `off` |
 | `reazonLanguage` | 任意 | Reazon K2 の言語。`ja` / `ja-en` / `ja-en-mls-5k` |

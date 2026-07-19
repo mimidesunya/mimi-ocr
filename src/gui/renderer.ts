@@ -141,7 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     title: '出てくるもの',
                     items: [
                         '元ファイルと同じ場所に、ページ付きのMarkdownが作られます。',
-                        '自動改名をOnにすると、内容を見てファイル名も付け直します。'
+                        '自動改名をOnにすると、変更前のファイル名と内容を併せてファイル名を付け直します。'
                     ]
                 }
             ]

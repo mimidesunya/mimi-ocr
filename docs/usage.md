@@ -21,7 +21,7 @@
 - `Mode`: `バッチ` / `同期`
 - `PDFテキスト`: 埋め込みテキスト優先のオンオフ
 - `バッチサイズ`: OCRではPDFを何ページずつ処理するか、音声認識では何ファイルずつ並列処理するか
-- `自動改名`: OCRでは入力ファイル名、音声認識では音声ファイル本体と出力Markdown名を内容から自動生成します
+- `自動改名`: 変更前のファイル名と内容を併せて判断し、OCRでは入力ファイル名、音声認識では音声ファイル本体と出力Markdown名を自動生成します
 - `コンテキスト`: OCRまたは音声認識前に登場人物、役職、固有名詞、専門用語などを補助情報として渡します
 - `PDF抽出` 選択時は、ページ指定、PDFページ/印刷ページ、2面割付、ページ方向を指定できます。
 
@@ -72,7 +72,7 @@ npm run transcribe -- .\samples\meeting.m4a --context-text "登場人物: 田中
 npm run transcribe -- .\samples\meeting.m4a --trim_silence
 ```
 
-`--mode=batch` は複数の音声ファイルを `--batch_size` ごとに並列処理します。`--auto_rename` を付けると、文字起こし内容から `YYYY-MM-DD_反訳書_表題` または `YYYY-MM-DD_音声認識_表題` の stem を作り、音声ファイル本体とMarkdownを同名に揃えます。付けない場合は元音声ファイル名ベースです。
+`--mode=batch` は複数の音声ファイルを `--batch_size` ごとに並列処理します。`--auto_rename` を付けると、変更前のファイル名と文字起こし内容を併せて `YYYY-MM-DD_反訳書_表題` または `YYYY-MM-DD_音声認識_表題` の stem を作り、音声ファイル本体とMarkdownを同名に揃えます。元ファイル名の日付や件名は候補として扱い、内容と矛盾する場合は内容を優先します。付けない場合は元音声ファイル名ベースです。
 `--provider=reazon-k2` は ReazonSpeech K2 / sherpa-onnx をローカル実行します。既定では ffmpeg で短い 16kHz mono WAV チャンクへ分割してから認識し、`--postprocess-ai=auto|gemini|openai|off` でAI後処理の有無を選びます。AI後処理ではローカルASR結果を発言単位JSONへ整え、既存の Markdown / 反訳書生成へ渡します。
 音声認識は既存の Markdown がある場合、OCRと同様にAPI処理をスキップします。`--auto_rename` を付けた場合は、既存 Markdown の内容を使って音声ファイル本体と Markdown の改名だけを行います。
 このため、文字起こし済みの音声は再度APIへ送らず、必要な場合だけファイル名整理を後から実行できます。
