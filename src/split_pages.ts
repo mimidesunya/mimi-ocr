@@ -21,6 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PDFDocument } = require('pdf-lib');
+const { normalizeLegacyPageMarkers } = require('./lib/page_markers');
 
 interface SplitEntry {
     filename: string;
@@ -71,17 +72,18 @@ function findPdf(filePath: string): string | null {
 function parsePages(content: string): Map<number, string> {
     const pages = new Map<number, string>();
     const pagePattern = /### -- Begin Page (\d+).*? --/g;
+    const normalizedContent = normalizeLegacyPageMarkers(content);
 
     let match;
     const markers: { pageNum: number; index: number }[] = [];
-    while ((match = pagePattern.exec(content)) !== null) {
+    while ((match = pagePattern.exec(normalizedContent)) !== null) {
         markers.push({ pageNum: parseInt(match[1]), index: match.index });
     }
 
     for (let i = 0; i < markers.length; i++) {
         const start = markers[i].index;
-        const end = i + 1 < markers.length ? markers[i + 1].index : content.length;
-        pages.set(markers[i].pageNum, content.substring(start, end).trimEnd());
+        const end = i + 1 < markers.length ? markers[i + 1].index : normalizedContent.length;
+        pages.set(markers[i].pageNum, normalizedContent.substring(start, end).trimEnd());
     }
 
     return pages;

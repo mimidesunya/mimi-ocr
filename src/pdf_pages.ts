@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PDFDocument } = require('pdf-lib');
+const { normalizeLegacyPageMarkers } = require('./lib/page_markers');
 
 type PageType = 'pdf' | 'printed';
 type Direction = 'ltr' | 'rtl';
@@ -50,7 +51,7 @@ function removeOcrSettingsComment(mdContent: string): string {
 }
 
 function parseOcrPages(mdContent: string): OcrPageInfo[] {
-    const content = removeOcrSettingsComment(mdContent);
+    const content = normalizeLegacyPageMarkers(removeOcrSettingsComment(mdContent));
     const beginPattern = /### -- Begin Page (\d+).*? --/g;
     const markers: { pageNum: number; index: number }[] = [];
     let match;

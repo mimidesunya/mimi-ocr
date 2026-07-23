@@ -11,6 +11,19 @@ const {
     buildTranscriptPrompt,
     getOriginalFilenameDate,
 } = require('../dist/src/transcribe_audio.js');
+const {
+    normalizeLegacyPageMarkers,
+} = require('../dist/src/lib/page_markers.js');
+
+test('legacy ndlocr-only page markers normalize to the canonical paged format', () => {
+    const normalized = normalizeLegacyPageMarkers(
+        '----- Page 1 -----\n本文1\n\n----- Page 2 -----\n本文2\n'
+    );
+
+    assert.match(normalized, /### -- Begin Page 1 --\n本文1/);
+    assert.match(normalized, /### -- Begin Page 2 --\n本文2/);
+    assert.doesNotMatch(normalized, /----- Page/);
+});
 
 test('OCR auto rename prompt treats the current filename as reference data', () => {
     const prompt = getNamingPrompt('general', path.join('private', 'client', '2024-01-02_請求書.pdf'));

@@ -15,14 +15,24 @@ const nodeRuntimeSourcePath = path.resolve(process.env.MIMI_NODE_RUNTIME || proc
 const nodeRuntimeDestDir = path.join(runtimeDir, 'node');
 const nodeRuntimeDestPath = path.join(nodeRuntimeDestDir, process.platform === 'win32' ? 'node.exe' : 'node');
 const launcherScript = path.join(repoRoot, 'platforms', 'windows', 'build_launcher.js');
+const siblingNpmCliPath = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+
+function buildChildEnv(overrides = {}) {
+  const env = { ...process.env, ...overrides };
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'Path';
+  env[pathKey] = `${path.dirname(process.execPath)}${path.delimiter}${env[pathKey] || ''}`;
+  return env;
+}
 
 function run(command, args, options = {}) {
+  const { env, ...spawnOptions } = options;
   const result = childProcess.spawnSync(command, args, {
     cwd: repoRoot,
     stdio: 'inherit',
     windowsHide: true,
     shell: false,
-    ...options,
+    env: buildChildEnv(env),
+    ...spawnOptions,
   });
 
   if (result.error) {
@@ -31,6 +41,14 @@ function run(command, args, options = {}) {
   if (result.status !== 0) {
     throw new Error(`${command} exited with status ${result.status}`);
   }
+}
+
+function runNpm(args, options = {}) {
+  if (fs.existsSync(siblingNpmCliPath)) {
+    run(process.execPath, [siblingNpmCliPath, ...args], options);
+    return;
+  }
+  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, options);
 }
 
 function assertSafeReleasePath(targetPath) {
@@ -105,7 +123,7 @@ function pruneNodeModulesForRelease() {
 
 function rebuildNativeNodeModulesForRelease() {
   console.log('[release] Rebuilding native dependency: canvas');
-  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['rebuild', 'canvas'], {
+  runNpm(['rebuild', 'canvas'], {
     cwd: appDir,
   });
 }
@@ -214,7 +232,7 @@ function main() {
   assertSafeReleasePath(releaseRoot);
 
   console.log('[release] Building TypeScript assets');
-  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build']);
+  runNpm(['run', 'build']);
 
   console.log(`[release] Cleaning ${releaseRoot}`);
   fs.rmSync(releaseRoot, { recursive: true, force: true });
@@ -232,7 +250,7 @@ function main() {
   copyDir(path.join(repoRoot, 'node_modules'), path.join(appDir, 'node_modules'), (source) => !shouldSkipNodeModuleCopy(source));
 
   console.log('[release] Pruning development dependencies');
-  run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['prune', '--omit=dev', '--ignore-scripts'], {
+  runNpm(['prune', '--omit=dev', '--ignore-scripts'], {
     cwd: appDir,
   });
   rebuildNativeNodeModulesForRelease();

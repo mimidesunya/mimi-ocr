@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PDFDocument } = require('pdf-lib');
+const { normalizeLegacyPageMarkers } = require('./lib/page_markers');
 
 interface PageInfo {
     pageNum: number;
@@ -42,17 +43,18 @@ function findPagedMd(pdfPath: string): string {
  */
 function analyzePages(content: string, threshold: number): PageInfo[] {
     const pagePattern = /### -- Begin Page (\d+).*? --/g;
+    const normalizedContent = normalizeLegacyPageMarkers(content);
     let match;
     const markers: { pageNum: number; index: number }[] = [];
-    while ((match = pagePattern.exec(content)) !== null) {
+    while ((match = pagePattern.exec(normalizedContent)) !== null) {
         markers.push({ pageNum: parseInt(match[1]), index: match.index });
     }
 
     const pages: PageInfo[] = [];
     for (let i = 0; i < markers.length; i++) {
         const start = markers[i].index;
-        const end = i + 1 < markers.length ? markers[i + 1].index : content.length;
-        const pageContent = content.substring(start, end).trimEnd();
+        const end = i + 1 < markers.length ? markers[i + 1].index : normalizedContent.length;
+        const pageContent = normalizedContent.substring(start, end).trimEnd();
 
         // マーカー行を除去して本文テキストのみ取得
         const bodyText = pageContent

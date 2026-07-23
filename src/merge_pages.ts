@@ -21,6 +21,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { normalizeLegacyPageMarkers } = require('./lib/page_markers');
 
 /**
  * OCRで出力されたMarkdownファイルからページ区切りマーカーを処理（結合・削除）し、
@@ -33,7 +34,7 @@ function mergeOcrPages(filePath) {
     }
 
     try {
-        let content = fs.readFileSync(filePath, 'utf-8');
+        let content = normalizeLegacyPageMarkers(fs.readFileSync(filePath, 'utf-8'));
 
         // ページ番号の整合性チェック
         const beginPagePattern = /### -- Begin Page (\d+).*? --/g;
