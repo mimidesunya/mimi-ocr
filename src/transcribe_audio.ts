@@ -425,6 +425,7 @@ function selectTextAiProvider(options: TranscriptionOptions) {
 async function requestTextAiJson(prompt: string, options: TranscriptionOptions, label: string, preferredProvider = '') {
     const provider = preferredProvider || selectTextAiProvider(options);
     if (provider === 'openai') {
+        console.log(`[AI] ${label}: openai / モデル: ${options.openaiChatModel || 'gpt-4o'}`);
         const response = await fetchWithRetry(`OpenAI ${label}`, () => fetch(options.openaiBaseUrl || 'https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -446,6 +447,7 @@ async function requestTextAiJson(prompt: string, options: TranscriptionOptions, 
 
     if (provider === 'gemini') {
         const model = options.geminiChatModel || 'gemini-2.5-flash-preview';
+        console.log(`[AI] ${label}: gemini / モデル: ${model}`);
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(options.geminiApiKey || '')}`;
         const response = await fetchWithRetry(`Gemini ${label}`, () => fetch(endpoint, {
             method: 'POST',
@@ -1582,7 +1584,7 @@ async function postprocessTranscriptWithAi(filePath: string, rawItems: Transcrip
 
     const prompt = buildTranscriptPostprocessPrompt(path.basename(filePath), rawItems, options);
     try {
-        console.log(`[Reazon K2] AI後処理: ${provider}`);
+        console.log(`[Reazon K2] AI後処理を開始: ${provider}`);
         const content = await requestTextAiJson(prompt, options, 'transcript postprocess request', provider);
         const json = extractJson(content) || (() => {
             try { return JSON.parse(String(content || '').trim()); } catch (_err) { return null; }

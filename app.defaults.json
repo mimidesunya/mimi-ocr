@@ -1,11 +1,11 @@
 {
   "providers": {
     "gemini": {
-      "chatModel": "gemini-2.5-flash-preview",
-      "transcriptionModel": "gemini-3.5-flash"
+      "chatModel": "gemini-3.5-flash-lite",
+      "transcriptionModel": "gemini-3.6-flash"
     },
     "openai": {
-      "chatModel": "gpt-4o",
+      "chatModel": "gpt-5.6",
       "transcriptionModel": "gpt-4o-transcribe-diarize"
     },
     "claude": {

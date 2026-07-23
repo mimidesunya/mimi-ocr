@@ -11,7 +11,12 @@ const os = require('os');
 const { loadPdfjsLib } = require('./pdfjs_loader');
 const { extractPdfPagesToImages } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
-const { getGeminiChatModel, getToolConfig, getProviderConfig } = require('./gemini_client');
+const { getGeminiChatModel, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
+
+function getAiModelLabel(aiProvider) {
+    const model = getProviderModel(aiProvider, 'chat');
+    return `${aiProvider} / モデル: ${model || '(未設定)'}`;
+}
 
 function formatTime(ms) {
     const seconds = Math.floor(ms / 1000);
@@ -865,7 +870,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
     ensureWritableOutputPath(errorPath, 'OCR中間結果ファイル');
 
-    console.log(`[情報] AIプロバイダー: ${aiProvider} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${useNdlocr ? (ndlocrOnly ? 'Only' : 'Pre-OCR') : 'Off'} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
+    console.log(`[情報] AI: ${ndlocrOnly ? '使用しない' : getAiModelLabel(aiProvider)} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${useNdlocr ? (ndlocrOnly ? 'Only' : 'Pre-OCR') : 'Off'} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
     const pdfBuffer = await fsPromises.readFile(pdfPath);
     const totalPages = await getPdfPageCount(pdfPath);
     let srcDoc = null;
@@ -1341,7 +1346,7 @@ async function docToText(docPath, contextInstruction = "", aiProvider = "gemini"
         return normalPath;
     }
     ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
-    console.log(`[情報] Word文書(doc)の解析を開始: ${docPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
+    console.log(`[情報] Word文書(doc)の解析を開始: ${docPath} (AI: ${getAiModelLabel(aiProvider)}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
         // word-extractorを使用してテキストを抽出
@@ -1395,7 +1400,7 @@ async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemin
         return normalPath;
     }
     ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
-    console.log(`[情報] Word文書(docx)の解析を開始: ${docxPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
+    console.log(`[情報] Word文書(docx)の解析を開始: ${docxPath} (AI: ${getAiModelLabel(aiProvider)}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
         const zip = new AdminZip(docxPath);
@@ -1471,7 +1476,7 @@ async function odtToText(odtPath, contextInstruction = "", aiProvider = "gemini"
         return normalPath;
     }
     ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
-    console.log(`[情報] ODT文書の解析を開始: ${odtPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
+    console.log(`[情報] ODT文書の解析を開始: ${odtPath} (AI: ${getAiModelLabel(aiProvider)}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
         const zip = new AdminZip(odtPath);
@@ -1582,7 +1587,7 @@ async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemin
         return normalPath;
     }
     ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
-    console.log(`[情報] PowerPoint文書の解析を開始: ${pptxPath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
+    console.log(`[情報] PowerPoint文書の解析を開始: ${pptxPath} (AI: ${getAiModelLabel(aiProvider)}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
         const zip = new AdminZip(pptxPath);
@@ -1686,7 +1691,7 @@ async function imageToText(imagePath, contextInstruction = "", aiProvider = "gem
     }
     ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
 
-    console.log(`[情報] 画像のOCR処理を開始: ${imagePath} (AI: ${aiProvider}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
+    console.log(`[情報] 画像のOCR処理を開始: ${imagePath} (AI: ${getAiModelLabel(aiProvider)}, モード: ${processMode === 'sync' ? '同期' : 'バッチ'})`);
 
     try {
         const imageBuffer = fs.readFileSync(imagePath);

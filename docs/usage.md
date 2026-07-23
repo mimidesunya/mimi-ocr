@@ -74,6 +74,8 @@ npm run transcribe -- .\samples\meeting.m4a --trim_silence
 
 `--mode=batch` は複数の音声ファイルを `--batch_size` ごとに並列処理します。`--auto_rename` を付けると、変更前のファイル名と文字起こし内容を併せて `YYYY-MM-DD_反訳書_表題` または `YYYY-MM-DD_音声認識_表題` の stem を作り、音声ファイル本体とMarkdownを同名に揃えます。元ファイル名の日付や件名は候補として扱い、内容と矛盾する場合は内容を優先します。付けない場合は元音声ファイル名ベースです。
 `--provider=reazon-k2` は ReazonSpeech K2 / sherpa-onnx をローカル実行します。既定では ffmpeg で短い 16kHz mono WAV チャンクへ分割してから認識し、`--postprocess-ai=auto|gemini|openai|off` でAI後処理の有無を選びます。AI後処理ではローカルASR結果を発言単位JSONへ整え、既存の Markdown / 反訳書生成へ渡します。
+
+AIを使用する処理では、実行開始時またはAI呼び出し時にプロバイダー名と実効モデル名をコンソールへ表示します。`ndlocr-only` などAIを使わない処理では「AI: 使用しない」と表示します。
 音声認識は既存の Markdown がある場合、OCRと同様にAPI処理をスキップします。`--auto_rename` を付けた場合は、既存 Markdown の内容を使って音声ファイル本体と Markdown の改名だけを行います。
 このため、文字起こし済みの音声は再度APIへ送らず、必要な場合だけファイル名整理を後から実行できます。
 `--trim_silence` を付けると、ffmpeg で無音区間をカットしてからAIへ渡します。カット後の時刻は元音声上の時刻へ補正し、Markdown末尾の設定コメントに無音カット設定と削除区間の要約を記録します。

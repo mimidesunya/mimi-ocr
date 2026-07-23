@@ -186,6 +186,25 @@ function getProviderConfig(providerName) {
     return config.providers[providerName] || null;
 }
 
+function getProviderModel(providerName, modelType = 'chat') {
+    const normalizedProvider = String(providerName || '').trim().toLowerCase();
+    const modelKey = modelType === 'transcription' ? 'transcriptionModel' : 'chatModel';
+    const provider = getProviderConfig(normalizedProvider) || {};
+    const configuredModel = String(provider[modelKey] || '').trim();
+    if (configuredModel) {
+        return configuredModel;
+    }
+
+    if (normalizedProvider === 'gemini' && modelKey === 'chatModel') {
+        const envModel = String(process.env.GEMINI_CHAT_MODEL || '').trim();
+        if (envModel) return envModel;
+        return '';
+    }
+
+    const fallbackProvider = FALLBACK_APP_DEFAULTS.providers[normalizedProvider] || {};
+    return String(fallbackProvider[modelKey] || '').trim();
+}
+
 function getToolConfig(toolName) {
     const config = loadConfig();
     if (!config || !config.tools) {
@@ -203,13 +222,8 @@ function getApiKey() {
 }
 
 function getGeminiChatModel() {
-    const gemini = getProviderConfig('gemini');
-    if (gemini?.chatModel) {
-        return gemini.chatModel;
-    }
-    if (process.env.GEMINI_CHAT_MODEL) {
-        return process.env.GEMINI_CHAT_MODEL;
-    }
+    const model = getProviderModel('gemini', 'chat');
+    if (model) return model;
     throw new Error('Gemini chat model is not configured. Set providers.gemini.chatModel in config.json or GEMINI_CHAT_MODEL.');
 }
 
@@ -221,6 +235,7 @@ module.exports = {
     loadUserConfig,
     loadConfig,
     getProviderConfig,
+    getProviderModel,
     getToolConfig,
     getApiKey,
     getGeminiChatModel

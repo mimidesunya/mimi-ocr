@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { findConfigPath, findAppDefaultsPath, loadAppDefaults, loadUserConfig, loadConfig } = require('../lib/gemini_client');
+const { findConfigPath, findAppDefaultsPath, loadAppDefaults, loadUserConfig, loadConfig, getProviderModel } = require('../lib/gemini_client');
 const { getScriptNodeRuntime } = require('../lib/node_runtime');
 
 // コンソールウィンドウの管理
@@ -419,10 +419,10 @@ ipcMain.handle('execute-script', async (event, {
                 ? 'gemini'
                 : 'openai';
         const defaultModel = provider === 'gemini'
-            ? 'gemini-3.5-flash'
+            ? getProviderModel('gemini', 'transcription') || 'gemini-3.5-flash'
             : provider === 'reazon-k2'
                 ? 'ja'
-                : 'gpt-4o-transcribe-diarize';
+                : getProviderModel('openai', 'transcription') || 'gpt-4o-transcribe-diarize';
         scriptArgs.push(`--target=${target}`);
         scriptArgs.push(`--provider=${provider}`);
         scriptArgs.push(`--model=${audioOptions?.model || defaultModel}`);
@@ -531,11 +531,19 @@ ipcMain.handle('execute-script', async (event, {
         consoleWin.webContents.send('console-info', `ページ指定: ${pdfPageOptions?.pages || '(未指定)'} / 種別: ${pageTypeLabel} / ${twoUpLabel}`);
     } else if (isAudio) {
         const target = ocrTarget === 'houhi' ? '法匪' : '一般';
-        const provider = audioOptions?.provider === 'reazon-k2'
-            ? 'Reazon K2'
+        const providerId = audioOptions?.provider === 'reazon-k2'
+            ? 'reazon-k2'
             : audioOptions?.provider === 'gemini'
+                ? 'gemini'
+                : 'openai';
+        const provider = providerId === 'reazon-k2'
+            ? 'Reazon K2'
+            : providerId === 'gemini'
                 ? 'Gemini'
                 : 'OpenAI';
+        const effectiveAudioModel = audioOptions?.model || (providerId === 'reazon-k2'
+            ? 'ja'
+            : getProviderModel(providerId, 'transcription') || '(未設定)');
         const postprocessLabel = audioOptions?.provider === 'reazon-k2'
             ? ` / AI後処理: ${audioOptions?.postprocessAi || 'auto'}`
             : '';
@@ -544,14 +552,19 @@ ipcMain.handle('execute-script', async (event, {
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
         const trimLabel = silenceTrim === true ? 'On' : 'Off';
         const contextLabel = context ? 'あり' : 'なし';
-        consoleWin.webContents.send('console-info', `音声認識: ${target} / ${provider} / モデル: ${audioOptions?.model || '(既定)'}${postprocessLabel} / モード: ${modeLabel} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel} / 無音カット: ${trimLabel} / コンテキスト: ${contextLabel}`);
+        consoleWin.webContents.send('console-info', `音声認識: ${target} / ${provider} / モデル: ${effectiveAudioModel}${postprocessLabel} / モード: ${modeLabel} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel} / 無音カット: ${trimLabel} / コンテキスト: ${contextLabel}`);
     } else if (!isMerge && !isStitch) {
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         const ocrLabel = ndlocrOnly ? 'ndlocr-only' : (useNdlocr ? 'ndlocr+AI' : 'AIのみ');
         const renameLabel = autoRename === false ? 'Off' : 'On';
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
+        const selectedProvider = aiProvider || 'gemini';
+        const effectiveModel = getProviderModel(selectedProvider, 'chat') || '(未設定)';
+        const aiLabel = ndlocrOnly && autoRename !== true
+            ? '使用しない'
+            : `${selectedProvider} / モデル: ${effectiveModel}${ndlocrOnly ? '（自動改名のみ）' : ''}`;
         consoleWin.webContents.send('console-info',
-            `ターゲット: ${target} / AI: ${aiProvider || 'gemini'} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / OCR: ${ocrLabel} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel}`
+            `ターゲット: ${target} / AI: ${aiLabel} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / OCR: ${ocrLabel} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel}`
             + ` / コンテキスト: ${context ? 'あり' : 'なし'}`
         );
     }
