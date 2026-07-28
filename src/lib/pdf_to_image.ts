@@ -72,6 +72,139 @@ async function cleanupPdfResources(sourcePdf, loadingTask) {
     }
 }
 
+/**
+ * レンダリング済みページの画素から、OCRへ送る必要のない白紙かを判定します。
+ *
+ * スキャン由来の薄い地色を白として扱いつつ、淡い文字を消さないように、
+ * ページ内の明るい画素から推定した背景色に対して十分暗い画素だけを数えます。
+ * 誤って本文を白紙扱いする方が危険なため、判定は意図的に保守的です。
+ */
+function isBlankImageData(imageData, options: any = {}) {
+    const data = imageData?.data;
+    const width = Number(imageData?.width) || 0;
+    const height = Number(imageData?.height) || 0;
+    if (!data || width <= 0 || height <= 0 || data.length < width * height * 4) {
+        throw new Error('白紙判定用の画像データが不正です');
+    }
+
+    const maxSamples = Number(options.maxSamples) || 1_000_000;
+    const totalPixels = width * height;
+    const sampleStep = Math.max(1, Math.ceil(Math.sqrt(totalPixels / maxSamples)));
+    const histogram = new Uint32Array(256);
+    let sampleCount = 0;
+
+    const getLuminance = (offset) => {
+        const alpha = data[offset + 3] / 255;
+        const source = (data[offset] * 299 + data[offset + 1] * 587 + data[offset + 2] * 114) / 1000;
+        return Math.max(0, Math.min(255, Math.round(255 - alpha * (255 - source))));
+    };
+
+    for (let y = 0; y < height; y += sampleStep) {
+        for (let x = 0; x < width; x += sampleStep) {
+            histogram[getLuminance((y * width + x) * 4)]++;
+            sampleCount++;
+        }
+    }
+
+    const backgroundPercentile = Number(options.backgroundPercentile) || 0.9;
+    const percentileTarget = Math.max(1, Math.ceil(sampleCount * backgroundPercentile));
+    let backgroundLuminance = 255;
+    let accumulated = 0;
+    for (let value = 0; value <= 255; value++) {
+        accumulated += histogram[value];
+        if (accumulated >= percentileTarget) {
+            backgroundLuminance = value;
+            break;
+        }
+    }
+
+    const minContrast = Number(options.minContrast) || 20;
+    const absoluteDarkLuminance = Number(options.absoluteDarkLuminance) || 235;
+    const foregroundThreshold = Math.max(
+        0,
+        Math.min(absoluteDarkLuminance, backgroundLuminance - minContrast)
+    );
+    const minInkRatio = Number(options.minInkRatio) || 0.0002;
+    const minInkPixels = Number(options.minInkPixels) || 48;
+    const requiredInkSamples = Math.max(minInkPixels, Math.ceil(sampleCount * minInkRatio));
+
+    let inkSamples = 0;
+    for (let value = 0; value <= foregroundThreshold; value++) {
+        inkSamples += histogram[value];
+    }
+
+    return inkSamples < requiredInkSamples;
+}
+
+/**
+ * 指定PDFページを低解像度でレンダリングし、白紙ページ番号を返します。
+ * 判定画像は保存せず、1ページずつ破棄してメモリ使用量を抑えます。
+ */
+async function detectBlankPdfPages(pdfPath, pageNumbers = [], dpi = 72, options: any = {}) {
+    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
+    const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
+    const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
+    const pdfBytes = fs.readFileSync(pdfPath);
+    const pdfjsLib = await loadPdfjsLib();
+    const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBytes),
+        standardFontDataUrl,
+        cMapUrl,
+        cMapPacked: true,
+        CanvasFactory: SafeCanvasFactory,
+        useSystemFonts: true,
+        disableFontFace: false,
+        useWorkerFetch: false,
+        isEvalSupported: false
+    });
+
+    let sourcePdf = null;
+    const blankPages = [];
+    const renderCanvasFactory = new SafeCanvasFactory();
+
+    try {
+        sourcePdf = await loadingTask.promise;
+        const validPages = normalizePageNumbers(pageNumbers, sourcePdf.numPages);
+        const scale = dpi / 72;
+
+        for (const pageNumber of validPages) {
+            const page = await sourcePdf.getPage(pageNumber);
+            let canvas = null;
+            try {
+                const viewport = page.getViewport({ scale });
+                canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+                const context = canvas.getContext('2d');
+                context.fillStyle = '#ffffff';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+
+                await page.render({
+                    canvasContext: context,
+                    viewport,
+                    canvasFactory: renderCanvasFactory,
+                    background: 'rgb(255, 255, 255)'
+                }).promise;
+
+                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                if (isBlankImageData(imageData, options)) {
+                    blankPages.push(pageNumber);
+                }
+            } finally {
+                if (canvas) {
+                    canvas.width = 0;
+                    canvas.height = 0;
+                }
+                if (typeof page.cleanup === 'function') {
+                    page.cleanup();
+                }
+            }
+        }
+
+        return blankPages;
+    } finally {
+        await cleanupPdfResources(sourcePdf, loadingTask);
+    }
+}
+
 async function renderPdfPages(sourcePdf, outputDir, dpi, pageNumbers) {
     const scale = dpi / 72;
     const outputFiles = [];
@@ -205,5 +338,7 @@ async function extractPdfPagesToImages(pdfPath, outputDir, dpi = 200, pageNumber
 
 module.exports = {
     extractPdfToImages,
-    extractPdfPagesToImages
+    extractPdfPagesToImages,
+    detectBlankPdfPages,
+    isBlankImageData
 };

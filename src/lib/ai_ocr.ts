@@ -9,7 +9,7 @@ const { ClaudeOcrProcessor } = require('./claude_client');
 const { OpenAIOcrProcessor } = require('./openai_client');
 const os = require('os');
 const { loadPdfjsLib } = require('./pdfjs_loader');
-const { extractPdfPagesToImages } = require('./pdf_to_image');
+const { extractPdfPagesToImages, detectBlankPdfPages } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
 const { getGeminiChatModel, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
 
@@ -394,6 +394,13 @@ function buildOcrErrorPageContent(pageNum, detail, ndlocrOnly = false) {
     }
 
     return `### -- Begin Page ${pageNum} --\n\n[ERROR: OCR Failed for page ${pageNum}]\n[ERROR DETAIL]\n${detailLines}\n\n`;
+}
+
+function buildBlankOcrPageContent(pageNum, ndlocrOnly = false) {
+    if (ndlocrOnly) {
+        return '';
+    }
+    return `### -- Begin Page ${pageNum} --\n\n### -- End --`;
 }
 
 function describeWriteError(filePath, error, label = '出力ファイル') {
@@ -910,7 +917,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         }
     }
 
-    const pageIndices = [];
+    let pageIndices = [];
     for (let i = startPage; i <= actualEndPage; i++) {
         if (!pageMap.has(i)) {
             pageIndices.push(i);
@@ -922,8 +929,27 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         return fs.existsSync(errorPath) ? errorPath : normalPath;
     }
 
+    try {
+        console.log(`[空白検出] OCR前に ${pageIndices.length} ページを確認中...`);
+        const blankPages = await detectBlankPdfPages(pdfPath, pageIndices);
+        const blankPageSet = new Set(blankPages);
+        for (const pageNum of blankPages) {
+            pageMap.set(pageNum, buildBlankOcrPageContent(pageNum, ndlocrOnly));
+            pageErrorMap.delete(pageNum);
+        }
+        pageIndices = pageIndices.filter(pageNum => !blankPageSet.has(pageNum));
+        if (blankPages.length > 0) {
+            console.log(`[空白検出] ${blankPages.length} ページをOCR対象から除外しました: ${blankPages.join(', ')}`);
+        } else {
+            console.log(`[空白検出] 白紙ページはありませんでした。`);
+        }
+    } catch (e) {
+        // 白紙判定自体の失敗でOCR全体を止めず、安全側として全ページをOCRへ回す。
+        console.warn(`[空白検出] 判定に失敗したため全ページをOCR処理します: ${e.message}`);
+    }
+
     let embeddedTextMap = new Map();
-    if (preferPdfText) {
+    if (preferPdfText && pageIndices.length > 0) {
         try {
             console.log(`[PDFテキスト] 埋め込みテキストを確認中...`);
             embeddedTextMap = await extractEmbeddedTextFromPdfPages(pdfPath, pageIndices);
@@ -1128,7 +1154,10 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         }
 
         // 2. Run Batch(es) with Retry Logic
-        const batchProcessor = aiProvider === 'claude' ? null : new GeminiBatchProcessor();
+        // 全ページが白紙ならリクエストは0件。APIキー確認を含むprovider初期化も行わない。
+        const batchProcessor = aiProvider === 'gemini' && requests.length > 0
+            ? new GeminiBatchProcessor()
+            : null;
         let pendingIndices = requests.map((_, i) => i);
         let retryCount = 0;
         const MAX_RETRIES = 3;
