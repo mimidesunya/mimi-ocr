@@ -1,13 +1,100 @@
 const fs = require('fs');
 const path = require('path');
-const { createCanvas, DOMMatrix, ImageData } = require('canvas');
+const { createCanvas, DOMMatrix, ImageData, Path2D } = require('@napi-rs/canvas');
 const { loadPdfjsLib } = require('./pdfjs_loader');
 
+// pdfjs はブラウザのグローバル (DOMMatrix / ImageData / Path2D) を前提に描画します。
+// pdfjs 自身も Node 用の polyfill を持ちますが、それは process.getBuiltinModule に依存するため
+// Node 20.16 未満では丸ごと無効になります。ここで確実に用意します。
+//
+// 描画に使うキャンバス実装と Path2D は同一ライブラリでなければならないため、node-canvas ではなく
+// pdfjs が想定する @napi-rs/canvas を使います。node-canvas は Path2D を一切提供しておらず、
+// これが無いとパス描画を含むPDFのレンダリングが必ず失敗します。
 if (typeof globalThis.DOMMatrix === 'undefined' && DOMMatrix) {
     globalThis.DOMMatrix = DOMMatrix;
 }
 if (typeof globalThis.ImageData === 'undefined' && ImageData) {
     globalThis.ImageData = ImageData;
+}
+if (typeof globalThis.Path2D === 'undefined' && Path2D) {
+    globalThis.Path2D = Path2D;
+}
+
+// polyfill が欠けたまま描画すると、pdfjs は警告を出すだけで処理を続け、中身の抜けた画像を
+// 「成功」として返します。静かな劣化を防ぐため、ここで打ち切ります。
+for (const requiredGlobal of ['DOMMatrix', 'ImageData', 'Path2D']) {
+    if (typeof globalThis[requiredGlobal] === 'undefined') {
+        throw new Error(
+            `PDF描画に必要な ${requiredGlobal} を用意できません。@napi-rs/canvas を再インストールしてください。`
+        );
+    }
+}
+
+// pdfjs の Node 用リーダーも process.getBuiltinModule に依存するため、CMap と標準フォントを
+// 自前で読みます。これが無いと CJK フォントのグリフを解決できず、本文が化けます。
+class FileCMapReaderFactory {
+    baseUrl: string | null;
+    isCompressed: boolean;
+
+    constructor({ baseUrl = null, isCompressed = true }: any) {
+        this.baseUrl = baseUrl;
+        this.isCompressed = isCompressed;
+    }
+
+    async fetch({ name }: any) {
+        if (!this.baseUrl) {
+            throw new Error('cMapUrl が指定されていません。');
+        }
+        if (!name) {
+            throw new Error('CMap 名が指定されていません。');
+        }
+        const url = this.baseUrl + name + (this.isCompressed ? '.bcmap' : '');
+        return {
+            cMapData: new Uint8Array(await fs.promises.readFile(url)),
+            isCompressed: this.isCompressed
+        };
+    }
+}
+
+class FileStandardFontDataFactory {
+    baseUrl: string | null;
+
+    constructor({ baseUrl = null }: any) {
+        this.baseUrl = baseUrl;
+    }
+
+    async fetch({ filename }: any) {
+        if (!this.baseUrl) {
+            throw new Error('standardFontDataUrl が指定されていません。');
+        }
+        if (!filename) {
+            throw new Error('フォントファイル名が指定されていません。');
+        }
+        return new Uint8Array(await fs.promises.readFile(this.baseUrl + filename));
+    }
+}
+
+/**
+ * pdfjs へ渡す共通の読み込みパラメータを組み立てます。
+ *
+ * disableFontFace は Node では必ず true にします。false のままだと埋め込みフォントの
+ * グリフが解決されず、本文が豆腐 (□) になったまま描画が「成功」してしまいます。
+ */
+function buildDocumentParameters(pdfBytes) {
+    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
+    return {
+        data: new Uint8Array(pdfBytes),
+        standardFontDataUrl: path.join(pdfjsPackageDir, 'standard_fonts') + path.sep,
+        cMapUrl: path.join(pdfjsPackageDir, 'cmaps') + path.sep,
+        cMapPacked: true,
+        CanvasFactory: SafeCanvasFactory,
+        CMapReaderFactory: FileCMapReaderFactory,
+        StandardFontDataFactory: FileStandardFontDataFactory,
+        useSystemFonts: false,
+        disableFontFace: true,
+        useWorkerFetch: false,
+        isEvalSupported: false
+    };
 }
 
 class SafeCanvasFactory {
@@ -141,22 +228,9 @@ function isBlankImageData(imageData, options: any = {}) {
  * 判定画像は保存せず、1ページずつ破棄してメモリ使用量を抑えます。
  */
 async function detectBlankPdfPages(pdfPath, pageNumbers = [], dpi = 72, options: any = {}) {
-    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-    const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
-    const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
     const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
-    const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBytes),
-        standardFontDataUrl,
-        cMapUrl,
-        cMapPacked: true,
-        CanvasFactory: SafeCanvasFactory,
-        useSystemFonts: true,
-        disableFontFace: false,
-        useWorkerFetch: false,
-        isEvalSupported: false
-    });
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfBytes));
 
     let sourcePdf = null;
     const blankPages = [];
@@ -257,25 +331,11 @@ async function extractPdfToImages(pdfPath, outputDir, dpi = 200, startPage = 1, 
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-    const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
-    const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
-    
     // 注意: パスに全角文字が含まれるのを防ぐため、出力先パスを確認するか呼び出し側で担保する
     const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
-    
-    const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBytes),
-        standardFontDataUrl,
-        cMapUrl,
-        cMapPacked: true,
-        CanvasFactory: SafeCanvasFactory,
-        useSystemFonts: true,
-        disableFontFace: false,
-        useWorkerFetch: false,
-        isEvalSupported: false
-    });
+
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfBytes));
 
     let sourcePdf = null;
 
@@ -304,23 +364,10 @@ async function extractPdfPagesToImages(pdfPath, outputDir, dpi = 200, pageNumber
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-    const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
-    const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
     const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
 
-    const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBytes),
-        standardFontDataUrl,
-        cMapUrl,
-        cMapPacked: true,
-        CanvasFactory: SafeCanvasFactory,
-        useSystemFonts: true,
-        disableFontFace: false,
-        useWorkerFetch: false,
-        isEvalSupported: false
-    });
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfBytes));
 
     let sourcePdf = null;
 
@@ -340,5 +387,6 @@ module.exports = {
     extractPdfToImages,
     extractPdfPagesToImages,
     detectBlankPdfPages,
-    isBlankImageData
+    isBlankImageData,
+    buildDocumentParameters
 };

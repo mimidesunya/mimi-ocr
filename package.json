@@ -18,7 +18,7 @@
     "stitch": "npm run build && node dist/src/stitch_pages.js",
     "pdf-pages": "npm run build && node dist/src/pdf_pages.js",
     "transcribe": "npm run build && node dist/src/transcribe_audio.js",
-    "test": "npm run build && node --test tests/auto_rename_filename.test.js tests/blank_page_detection.test.js",
+    "test": "npm run build && node --test tests/auto_rename_filename.test.js tests/blank_page_detection.test.js tests/pdf_rendering_setup.test.js",
     "build:launcher": "node scripts/build_launcher.js",
     "build:launcher:windows": "node platforms/windows/build_launcher.js",
     "build:launcher:mac": "node platforms/macos/build_launcher.js",
@@ -27,6 +27,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.67.0",
     "@google/genai": "^1.34.0",
+    "@napi-rs/canvas": "^0.1.100",
     "adm-zip": "^0.6.0",
     "canvas": "^3.2.3",
     "pdf-lib": "^1.17.1",
