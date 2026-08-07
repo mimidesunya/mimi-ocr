@@ -599,11 +599,13 @@ document.addEventListener('DOMContentLoaded', () => {
     async function openConfigModal(tab: 'settings' | 'keys' = 'settings') {
         configModal.classList.remove('hidden');
         showConfigTab(tab);
+        (window as any).electronAPI.resizeMainWindow('settings').catch(() => {});
         if (!loadedConfig) await loadConfigIntoModal();
     }
 
     function closeConfigModal() {
         configModal.classList.add('hidden');
+        (window as any).electronAPI.resizeMainWindow('default').catch(() => {});
     }
 
     settingsBtn.addEventListener('click', () => {
@@ -644,6 +646,21 @@ document.addEventListener('DOMContentLoaded', () => {
             setConfigStatus(`保存先を選べませんでした: ${err.message}`, 'error');
         }
     });
+    document.querySelectorAll<HTMLButtonElement>('[data-paste-target]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const targetId = btn.dataset.pasteTarget;
+            const target = targetId ? document.getElementById(targetId) as HTMLInputElement | null : null;
+            if (!target) return;
+            try {
+                const text = await (window as any).electronAPI.readClipboardText();
+                target.value = text || '';
+                target.focus();
+            } catch (err: any) {
+                setConfigStatus(`貼り付けに失敗しました: ${err.message}`, 'error');
+            }
+        });
+    });
+
     toolHelpCloseBtn.addEventListener('click', closeToolHelpModal);
     toolHelpOkBtn.addEventListener('click', closeToolHelpModal);
 

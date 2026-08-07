@@ -43,6 +43,9 @@
             margin: 4px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            overflow-y: auto;
+            overflow-x: hidden;
+            min-height: 0;
         }
 
         /* ヘッダー（ドラッグ領域） */
@@ -460,7 +463,7 @@
         .modal-backdrop.hidden { display: none; }
 
         .modal {
-            width: min(720px, 100%);
+            width: min(760px, 100%);
             max-height: calc(100vh - 28px);
             background: rgba(25, 30, 38, 0.98);
             border: 1px solid rgba(255, 255, 255, 0.12);
@@ -597,6 +600,40 @@
             font-size: 0.72rem;
             overflow-wrap: anywhere;
             user-select: text;
+        }
+
+        .settings-intro {
+            color: var(--text-color);
+            background: rgba(100, 181, 246, 0.1);
+            border: 1px solid rgba(100, 181, 246, 0.25);
+            border-radius: 6px;
+            padding: 8px 10px;
+            margin-bottom: 4px;
+        }
+
+        .settings-details {
+            grid-column: 1 / -1;
+            margin-top: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 8px 10px;
+            background: rgba(0, 0, 0, 0.14);
+        }
+
+        .settings-details summary {
+            cursor: pointer;
+            color: var(--accent-color);
+            font-size: 0.78rem;
+            font-weight: 600;
+            list-style: revert;
+        }
+
+        .settings-details[open] summary {
+            margin-bottom: 8px;
+        }
+
+        .settings-details .settings-grid {
+            margin-top: 4px;
         }
 
         .help-card {
@@ -926,11 +963,14 @@
                     <div class="modal-pane" id="configSettingsPane">
                         <div class="settings-grid">
                             <div class="settings-note">保存先: <span class="settings-path" id="configPathLabel"></span></div>
-                            <div class="settings-note">OCRや音声認識の画面上の選択は、最後に使った状態を自動で覚えます。ここではAPIキー、モデル名、外部ツールの調整だけを保存します。</div>
+                            <div class="settings-note settings-intro">はじめての方へ: 下の3つのAIサービスから<strong>使いたいものを1つ選び</strong>、そのAPIキーだけ入力してください（複数登録しても構いません）。APIキーの取り方が分からない場合は、上の「APIキーの取り方」タブを見てください。モデル名や下の「詳細設定」は、通常は初期値のままで問題ありません。</div>
 
                             <div class="settings-section-title">Gemini</div>
                             <label class="option-label" for="cfgGeminiApiKey">APIキー</label>
-                            <input class="settings-input" id="cfgGeminiApiKey" type="password" autocomplete="off" placeholder="AIza...">
+                            <div class="settings-inline">
+                                <input class="settings-input" id="cfgGeminiApiKey" type="text" autocomplete="off" spellcheck="false" placeholder="AIza...">
+                                <button class="context-browse-btn" type="button" data-paste-target="cfgGeminiApiKey" title="クリップボードから貼り付け">📋 貼り付け</button>
+                            </div>
                             <label class="option-label" for="cfgGeminiChatModel">OCRモデル</label>
                             <input class="settings-input" id="cfgGeminiChatModel" type="text" placeholder="gemini-2.5-flash-preview">
                             <label class="option-label" for="cfgGeminiTranscriptionModel">音声モデル</label>
@@ -938,7 +978,10 @@
 
                             <div class="settings-section-title">OpenAI</div>
                             <label class="option-label" for="cfgOpenaiApiKey">APIキー</label>
-                            <input class="settings-input" id="cfgOpenaiApiKey" type="password" autocomplete="off" placeholder="sk-...">
+                            <div class="settings-inline">
+                                <input class="settings-input" id="cfgOpenaiApiKey" type="text" autocomplete="off" spellcheck="false" placeholder="sk-...">
+                                <button class="context-browse-btn" type="button" data-paste-target="cfgOpenaiApiKey" title="クリップボードから貼り付け">📋 貼り付け</button>
+                            </div>
                             <label class="option-label" for="cfgOpenaiChatModel">OCRモデル</label>
                             <input class="settings-input" id="cfgOpenaiChatModel" type="text" placeholder="gpt-4o">
                             <label class="option-label" for="cfgOpenaiTranscriptionModel">音声モデル</label>
@@ -946,39 +989,46 @@
 
                             <div class="settings-section-title">Claude</div>
                             <label class="option-label" for="cfgClaudeApiKey">APIキー</label>
-                            <input class="settings-input" id="cfgClaudeApiKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+                            <div class="settings-inline">
+                                <input class="settings-input" id="cfgClaudeApiKey" type="text" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
+                                <button class="context-browse-btn" type="button" data-paste-target="cfgClaudeApiKey" title="クリップボードから貼り付け">📋 貼り付け</button>
+                            </div>
                             <label class="option-label" for="cfgClaudeChatModel">OCRモデル</label>
                             <input class="settings-input" id="cfgClaudeChatModel" type="text" placeholder="claude-opus-4-8">
 
-                            <div class="settings-section-title">自動準備する外部ツール</div>
-                            <label class="option-label" for="cfgToolsRootDir">保存先</label>
-                            <div class="settings-inline">
-                                <input class="settings-input" id="cfgToolsRootDir" type="text" placeholder="未指定ならアプリ標準の場所">
-                                <button class="context-browse-btn" id="cfgToolsRootBrowseBtn" type="button">選択</button>
-                            </div>
-                            <label class="option-label" for="cfgNdlocrParallelJobs">ndlocr並列数</label>
-                            <input class="settings-input" id="cfgNdlocrParallelJobs" type="text" placeholder="auto">
-                            <label class="option-label" for="cfgNdlocrPageChunkSize">ページ塊</label>
-                            <input class="settings-input" id="cfgNdlocrPageChunkSize" type="number" min="1" max="200" value="8">
-                            <label class="option-label" for="cfgNdlocrImageDpi">画像DPI</label>
-                            <input class="settings-input" id="cfgNdlocrImageDpi" type="number" min="72" max="600" value="300">
-                            <label class="option-label" for="cfgStitchImageDpi">復元DPI</label>
-                            <input class="settings-input" id="cfgStitchImageDpi" type="text" value="auto" placeholder="auto">
-                            <label class="option-label" for="cfgStitchPdfImageFormat">復元PDF画像形式</label>
-                            <input class="settings-input" id="cfgStitchPdfImageFormat" type="text" value="jpeg" placeholder="jpeg または png">
-                            <label class="option-label" for="cfgStitchJpegQuality">復元JPEG品質</label>
-                            <input class="settings-input" id="cfgStitchJpegQuality" type="number" min="0.1" max="0.98" step="0.01" value="0.86">
-                            <label class="option-label" for="cfgReazonPythonPath">Reazon Python</label>
-                            <input class="settings-input" id="cfgReazonPythonPath" type="text" placeholder="未指定なら自動準備">
-                            <label class="option-label" for="cfgReazonLanguage">Reazon言語</label>
-                            <input class="settings-input" id="cfgReazonLanguage" type="text" placeholder="ja / ja-en / ja-en-mls-5k">
-                            <label class="option-label" for="cfgReazonDevice">Reazonデバイス</label>
-                            <input class="settings-input" id="cfgReazonDevice" type="text" placeholder="cpu / cuda / coreml">
-                            <label class="option-label" for="cfgReazonPrecision">Reazon精度</label>
-                            <input class="settings-input" id="cfgReazonPrecision" type="text" placeholder="fp32 / int8 / int8-fp32">
-                            <label class="option-label" for="cfgReazonChunkSec">Reazon分割秒</label>
-                            <input class="settings-input" id="cfgReazonChunkSec" type="number" min="5" max="120" value="25">
-                            <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite と ReazonSpeech K2 は初回使用時にアプリ標準の保存先へ自動準備します。分割復元は内蔵エンジンで処理するため追加ソフトは不要です。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。</div>
+                            <details class="settings-details">
+                                <summary>詳細設定（外部ツール・上級者向け／通常は変更不要）</summary>
+                                <div class="settings-grid">
+                                    <label class="option-label" for="cfgToolsRootDir">保存先</label>
+                                    <div class="settings-inline">
+                                        <input class="settings-input" id="cfgToolsRootDir" type="text" placeholder="未指定ならアプリ標準の場所">
+                                        <button class="context-browse-btn" id="cfgToolsRootBrowseBtn" type="button">選択</button>
+                                    </div>
+                                    <label class="option-label" for="cfgNdlocrParallelJobs">ndlocr並列数</label>
+                                    <input class="settings-input" id="cfgNdlocrParallelJobs" type="text" placeholder="auto">
+                                    <label class="option-label" for="cfgNdlocrPageChunkSize">ページ塊</label>
+                                    <input class="settings-input" id="cfgNdlocrPageChunkSize" type="number" min="1" max="200" value="8">
+                                    <label class="option-label" for="cfgNdlocrImageDpi">画像DPI</label>
+                                    <input class="settings-input" id="cfgNdlocrImageDpi" type="number" min="72" max="600" value="300">
+                                    <label class="option-label" for="cfgStitchImageDpi">復元DPI</label>
+                                    <input class="settings-input" id="cfgStitchImageDpi" type="text" value="auto" placeholder="auto">
+                                    <label class="option-label" for="cfgStitchPdfImageFormat">復元PDF画像形式</label>
+                                    <input class="settings-input" id="cfgStitchPdfImageFormat" type="text" value="jpeg" placeholder="jpeg または png">
+                                    <label class="option-label" for="cfgStitchJpegQuality">復元JPEG品質</label>
+                                    <input class="settings-input" id="cfgStitchJpegQuality" type="number" min="0.1" max="0.98" step="0.01" value="0.86">
+                                    <label class="option-label" for="cfgReazonPythonPath">Reazon Python</label>
+                                    <input class="settings-input" id="cfgReazonPythonPath" type="text" placeholder="未指定なら自動準備">
+                                    <label class="option-label" for="cfgReazonLanguage">Reazon言語</label>
+                                    <input class="settings-input" id="cfgReazonLanguage" type="text" placeholder="ja / ja-en / ja-en-mls-5k">
+                                    <label class="option-label" for="cfgReazonDevice">Reazonデバイス</label>
+                                    <input class="settings-input" id="cfgReazonDevice" type="text" placeholder="cpu / cuda / coreml">
+                                    <label class="option-label" for="cfgReazonPrecision">Reazon精度</label>
+                                    <input class="settings-input" id="cfgReazonPrecision" type="text" placeholder="fp32 / int8 / int8-fp32">
+                                    <label class="option-label" for="cfgReazonChunkSec">Reazon分割秒</label>
+                                    <input class="settings-input" id="cfgReazonChunkSec" type="number" min="5" max="120" value="25">
+                                    <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite と ReazonSpeech K2 は初回使用時にアプリ標準の保存先へ自動準備します。分割復元は内蔵エンジンで処理するため追加ソフトは不要です。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。</div>
+                                </div>
+                            </details>
                         </div>
                     </div>
                     <div class="modal-pane hidden" id="configKeysPane">

@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, clipboard } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
     executeScript: (scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions, stitchOptions) =>
@@ -20,5 +20,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onError: (callback) =>
         ipcRenderer.on('script-error', (_event, value) => callback(value)),
     getPathForFile: (file) =>
-        webUtils.getPathForFile(file)
+        webUtils.getPathForFile(file),
+    readClipboardText: () =>
+        clipboard.readText(),
+    resizeMainWindow: (mode) =>
+        ipcRenderer.invoke('resize-main-window', mode)
 });

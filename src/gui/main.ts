@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -7,6 +7,27 @@ const { getScriptNodeRuntime } = require('../lib/node_runtime');
 
 // コンソールウィンドウの管理
 let consoleWindows = new Map();
+
+// メインウィンドウの管理（設定画面を開くときに一時的に大きくする）
+let mainWindow = null;
+const DEFAULT_WINDOW_SIZE = { width: 480, height: 840 };
+const SETTINGS_WINDOW_SIZE = { width: 800, height: 860 };
+
+function resizeMainWindowForMode(mode) {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const target = mode === 'settings' ? SETTINGS_WINDOW_SIZE : DEFAULT_WINDOW_SIZE;
+    const currentBounds = mainWindow.getBounds();
+    const workArea = screen.getDisplayMatching(currentBounds).workArea;
+    const width = Math.min(target.width, workArea.width);
+    const height = Math.min(target.height, workArea.height);
+    const centerX = currentBounds.x + currentBounds.width / 2;
+    const centerY = currentBounds.y + currentBounds.height / 2;
+    let x = Math.round(centerX - width / 2);
+    let y = Math.round(centerY - height / 2);
+    x = Math.min(Math.max(x, workArea.x), workArea.x + workArea.width - width);
+    y = Math.min(Math.max(y, workArea.y), workArea.y + workArea.height - height);
+    mainWindow.setBounds({ x, y, width, height }, true);
+}
 
 function findUpFile(fileName) {
     const startDirs = [process.env.MIMI_OCR_PROJECT_ROOT, process.cwd(), __dirname, path.dirname(process.execPath)].filter(Boolean);
@@ -146,8 +167,11 @@ function createWindow() {
         : path.join(__dirname, '../../bin/MIMI OCR.app/Contents/Resources/app.icns');
     
     const win = new BrowserWindow({
-        width: 480,
-        height: 760,
+        width: DEFAULT_WINDOW_SIZE.width,
+        height: DEFAULT_WINDOW_SIZE.height,
+        minWidth: 380,
+        minHeight: 480,
+        resizable: true,
         icon: fs.existsSync(iconPath) ? iconPath : undefined,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -162,6 +186,11 @@ function createWindow() {
         transparent: true,
         backgroundColor: '#00000000',
         title: 'MIMI OCR'
+    });
+
+    mainWindow = win;
+    win.on('closed', () => {
+        if (mainWindow === win) mainWindow = null;
     });
 
     win.loadFile(path.join(__dirname, 'index.html'));
@@ -250,6 +279,11 @@ ipcMain.handle('save-config', async (_event, config) => {
 
     const configPath = writeUserConfig(config);
     return { success: true, path: configPath };
+});
+
+ipcMain.handle('resize-main-window', async (_event, mode) => {
+    resizeMainWindowForMode(mode === 'settings' ? 'settings' : 'default');
+    return { success: true };
 });
 
 ipcMain.handle('open-external-url', async (_event, url) => {
