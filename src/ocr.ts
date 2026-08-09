@@ -113,6 +113,7 @@ async function main() {
     const config = loadConfig() || {};
     const ocrConfig = config.ocr || {};
     const inputPaths = [];
+    let failedCount = 0;
     let target = normalizeTarget(ocrConfig.target);
     let contextFilePath = ocrConfig.houhiTemplatePath || null;
     let contextText = compactTextParts(
@@ -216,6 +217,7 @@ async function main() {
         const absPath = path.resolve(inputPath);
         if (!fs.existsSync(absPath)) {
             console.error(`[エラー] パスが見つかりません: ${absPath}`);
+            failedCount++;
             continue;
         }
         if (fs.statSync(absPath).isDirectory()) {
@@ -259,6 +261,12 @@ async function main() {
             ocrOutputPath = await imageToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
         } else {
             console.warn(`[警告] 未対応のファイル形式です: ${path.basename(filePath)}`);
+            return false;
+        }
+
+        if (ocrOutputPath && /_ERROR_paged\.md$/i.test(ocrOutputPath)) {
+            console.error(`[エラー] 未完了ページを含むため、OCR中間結果として保存されました: ${ocrOutputPath}`);
+            return false;
         }
 
         if (ocrOutputPath && autoRename) {
@@ -268,6 +276,8 @@ async function main() {
                 console.warn(`[警告] 自動改名に失敗しました: ${path.basename(filePath)} / ${err.message}`);
             }
         }
+
+        return true;
     };
 
     const runFiles = async (files) => {
@@ -275,16 +285,22 @@ async function main() {
             console.log(`[情報] ${files.length} 個のファイルを順次処理します`);
             for (const fp of files) {
                 try {
-                    await processFile(fp);
+                    if (!await processFile(fp)) failedCount++;
                 } catch (err) {
                     console.error(`[エラー] ${path.basename(fp)}: ${err.message}`);
+                    failedCount++;
                 }
             }
         } else {
             console.log(`[情報] ${files.length} 個のファイルを並列処理します`);
-            await Promise.all(files.map(fp => processFile(fp).catch(err => {
-                console.error(`[エラー] ${path.basename(fp)}: ${err.message}`);
-            })));
+            await Promise.all(files.map(async fp => {
+                try {
+                    if (!await processFile(fp)) failedCount++;
+                } catch (err) {
+                    console.error(`[エラー] ${path.basename(fp)}: ${err.message}`);
+                    failedCount++;
+                }
+            }));
         }
     };
 
@@ -306,13 +322,23 @@ async function main() {
 
         if (files.length === 0) {
             console.warn(`[警告] ディレクトリ内に対応する文書ファイルが見つかりませんでした: ${absPath}`);
+            failedCount++;
             continue;
         }
 
         await runFiles(files.map(f => path.join(absPath, f)));
     }
 
+    if (failedCount > 0) {
+        console.error(`\n[エラー] 処理は終了しましたが、${failedCount} 件失敗しました。`);
+        process.exitCode = 1;
+        return;
+    }
+
     console.log("\nすべての処理が完了しました。");
 }
 
-main();
+main().catch(err => {
+    console.error(`[致命的エラー] ${err.message}`);
+    process.exitCode = 1;
+});

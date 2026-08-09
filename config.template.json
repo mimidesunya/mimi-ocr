@@ -18,10 +18,20 @@
       "precision": "fp32",
       "chunkSeconds": 25,
       "autoInstall": true
+    },
+    "vibeVoiceAsr": {
+      "binaryPath": "",
+      "vaeModelPath": "",
+      "lmModelPath": "",
+      "threads": 4,
+      "chunkSeconds": 1200,
+      "autoInstall": true
     }
   },
   "transcription": {
     "postprocessAi": "auto",
-    "reazonLanguage": "ja"
+    "reazonLanguage": "ja",
+    "vibeVoiceThreads": 4,
+    "vibeVoiceChunkSec": 1200
   }
 }

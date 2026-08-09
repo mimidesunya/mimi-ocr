@@ -80,10 +80,12 @@ class FileStandardFontDataFactory {
  * disableFontFace は Node では必ず true にします。false のままだと埋め込みフォントの
  * グリフが解決されず、本文が豆腐 (□) になったまま描画が「成功」してしまいます。
  */
-function buildDocumentParameters(pdfBytes) {
+function buildDocumentParameters(pdfSource) {
     const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
     return {
-        data: new Uint8Array(pdfBytes),
+        ...(typeof pdfSource === 'string'
+            ? { url: pdfSource }
+            : { data: new Uint8Array(pdfSource) }),
         standardFontDataUrl: path.join(pdfjsPackageDir, 'standard_fonts') + path.sep,
         cMapUrl: path.join(pdfjsPackageDir, 'cmaps') + path.sep,
         cMapPacked: true,
@@ -228,9 +230,8 @@ function isBlankImageData(imageData, options: any = {}) {
  * 判定画像は保存せず、1ページずつ破棄してメモリ使用量を抑えます。
  */
 async function detectBlankPdfPages(pdfPath, pageNumbers = [], dpi = 72, options: any = {}) {
-    const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
-    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfBytes));
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfPath));
 
     let sourcePdf = null;
     const blankPages = [];
@@ -332,10 +333,9 @@ async function extractPdfToImages(pdfPath, outputDir, dpi = 200, startPage = 1, 
     }
 
     // 注意: パスに全角文字が含まれるのを防ぐため、出力先パスを確認するか呼び出し側で担保する
-    const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
 
-    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfBytes));
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfPath));
 
     let sourcePdf = null;
 
@@ -364,10 +364,9 @@ async function extractPdfPagesToImages(pdfPath, outputDir, dpi = 200, pageNumber
         fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
 
-    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfBytes));
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfPath));
 
     let sourcePdf = null;
 
@@ -388,5 +387,6 @@ module.exports = {
     extractPdfPagesToImages,
     detectBlankPdfPages,
     isBlankImageData,
-    buildDocumentParameters
+    buildDocumentParameters,
+    cleanupPdfResources
 };

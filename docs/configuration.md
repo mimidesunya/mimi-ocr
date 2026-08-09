@@ -95,22 +95,24 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 
 ### `transcription`
 
-音声認識 CLI の既定値です。通常は `app.defaults.json` 側に置き、ユーザーごとに変えたい場合だけ `config.json` で上書きします。Gemini / OpenAI のモデル名とAPIキーは `providers.openai` / `providers.gemini` から読みます。ReazonSpeech K2 は `tools.reazonK2` のPython環境を使います。
+音声認識 CLI の既定値です。通常は `app.defaults.json` 側に置き、ユーザーごとに変えたい場合だけ `config.json` で上書きします。Gemini / OpenAI のモデル名とAPIキーは `providers.openai` / `providers.gemini` から読みます。ReazonSpeech K2 は `tools.reazonK2` のPython環境、VibeVoice ASR は `tools.vibeVoiceAsr` のCPU専用ランタイムを使います。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
-| `provider` | 任意 | `gemini`、`openai`、`reazon-k2`。既定は `gemini` |
+| `provider` | 任意 | `gemini`、`openai`、`reazon-k2`、`vibevoice-asr`。既定は `gemini` |
 | `language` | 任意 | 音声認識の言語。既定は `ja` |
 | `target` | 任意 | `general` または `houhi` |
 | `mode` | 任意 | `sync` または `batch` |
 | `batchSize` | 任意 | `batch` 時に同時処理する音声ファイル数 |
 | `autoRename` | 任意 | 変更前のファイル名と文字起こし内容から音声ファイル本体と出力Markdown名を自動生成するか |
 | `skipFormattedRename` | 任意 | 既に自動改名形式の音声ファイルは再判定せずスキップするか。既定は `false` |
-| `postprocessAi` | 任意 | Reazon K2 の生起こしをAIで整えるか。`auto` / `gemini` / `openai` / `off` |
+| `postprocessAi` | 任意 | Reazon K2 / VibeVoice ASR の生起こしをAIで整えるか。`auto` / `gemini` / `openai` / `off` |
 | `reazonLanguage` | 任意 | Reazon K2 の言語。`ja` / `ja-en` / `ja-en-mls-5k` |
 | `reazonDevice` | 任意 | Reazon K2 の実行デバイス。`cpu` / `cuda` / `coreml` |
 | `reazonPrecision` | 任意 | Reazon K2 の精度。`fp32` / `int8` / `int8-fp32` |
 | `reazonChunkSec` | 任意 | Reazon K2 に渡す音声チャンク秒数。既定は `25` |
+| `vibeVoiceThreads` | 任意 | VibeVoice ASR が使うCPUスレッド数。既定は `4` |
+| `vibeVoiceChunkSec` | 任意 | VibeVoice ASR に渡す音声チャンク秒数。既定は `1200`（20分） |
 | `silenceTrim.enabled` | 任意 | AIへ渡す前に無音区間をカットするか |
 | `silenceTrim.thresholdDb` | 任意 | 無音判定のしきい値 dB |
 | `silenceTrim.minSilenceSec` | 任意 | 無音とみなす最短秒数 |
@@ -159,6 +161,29 @@ ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffm
 | `cacheDir` | 任意 | Hugging Face キャッシュの保存先 |
 
 Reazon K2 はローカルASRなので、`--postprocess-ai=off` なら音声内容をAI APIへ送りません。`auto` / `gemini` / `openai` を選ぶと、ローカルASR結果のテキストだけをAIへ渡し、話者、句読点、反訳書用JSONへ整えます。
+
+### `tools.vibeVoiceAsr`
+
+`--provider=vibevoice-asr` で使う [Microsoft VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp) と [VibeVoice-ASR-BitNet](https://huggingface.co/microsoft/VibeVoice-ASR-BitNet) の設定です。7B Transformers版ではなく、量子化した1.5BモデルをCPUだけで動かします。GPU、CUDA、PyTorchは使いません。標準値は `app.defaults.json` にあります。
+
+未指定の場合、初回実行時に外部ツール保存先へ公式リポジトリを取得して `asr_stream_server` をビルドし、GGUFモデル2個（合計約1.7GB）を取得します。WindowsではCMakeとMinGW-w64（`gcc` / `g++` / `mingw32-make`）、macOS/LinuxではCMakeとGCCまたはClangが必要です。一度準備したランタイムとモデルは以後再利用します。
+
+| キー | 必須 | 説明 |
+| --- | --- | --- |
+| `binaryPath` | 任意 | ビルド済み `asr_stream_server` のパス。空なら自動準備 |
+| `vaeModelPath` | 任意 | `vibeasr-vae-encoder-i8_s.gguf` のパス。空なら自動取得 |
+| `lmModelPath` | 任意 | `vibeasr-lm-i2_s-embed-q6_k.gguf` のパス。空なら自動取得 |
+| `sourceDir` | 任意 | VibeASR.cppソース/ビルド先。空なら外部ツール保存先の `vibeasr-cpp` |
+| `modelDir` | 任意 | GGUFモデル保存先。空なら外部ツール保存先の `vibeasr-models/vibeasr` |
+| `modelId` | 任意 | GGUF取得元のHugging Faceモデルid。既定は `microsoft/VibeVoice-ASR-BitNet` |
+| `threads` | 任意 | 推論に使うCPUスレッド数。既定は `4` |
+| `chunkSeconds` | 任意 | 1回に渡す音声の長さ。既定は `1200`（20分）、範囲は60〜1200秒 |
+| `autoInstall` | 任意 | 未準備時にランタイムのビルドとモデル取得を行うか。既定は `true` |
+| `cCompiler` / `cxxCompiler` / `makePath` | 任意 | Windows自動ビルドで使うMinGWツールの明示パス |
+
+CPU版はチャンク単位のプレーンテキストを返し、音響的な話者分離や発言単位の正確なタイムスタンプは付けません。`postprocessAi=off` では話者を「話者不明」、時刻を各チャンクの開始時刻として保存します。`auto` / `gemini` / `openai` を選ぶとテキストをAIで発言単位に整形できますが、音声自体に基づく話者分離ではありません。
+
+Microsoftが公開しているBitNet版の評価表には英語・フランス語・イタリア語・韓国語・ポルトガル語・ベトナム語・中国語の結果が掲載されていますが、日本語評価は掲載されていません。日本語音声では出力を確認して利用してください。日本語を主対象にする場合は、既存のReazon K2もCPUローカルの選択肢です。
 
 ### `tools.stitchEngine`
 

@@ -9,7 +9,7 @@ const { ClaudeOcrProcessor } = require('./claude_client');
 const { OpenAIOcrProcessor } = require('./openai_client');
 const os = require('os');
 const { loadPdfjsLib } = require('./pdfjs_loader');
-const { extractPdfPagesToImages, detectBlankPdfPages } = require('./pdf_to_image');
+const { extractPdfPagesToImages, detectBlankPdfPages, buildDocumentParameters, cleanupPdfResources } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
 const { getGeminiChatModel, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
 
@@ -187,6 +187,16 @@ async function createImageOcrRequestFromPdfPages(pdfPath, pageNumbers, contextIn
     }
 }
 
+function estimateRequestsPayloadBytes(requests) {
+    let total = 2; // JSON array brackets
+    for (let i = 0; i < requests.length; i++) {
+        const json = JSON.stringify(requests[i]);
+        total += Buffer.byteLength(json, 'utf8');
+        if (i > 0) total += 1; // comma
+    }
+    return total;
+}
+
 async function runBatches(requests, metadata, batchProcessor, progressState, persistenceFile, processMode = 'batch') {
     const modelId = getGeminiChatModel();
     if (processMode === 'sync') {
@@ -197,7 +207,7 @@ async function runBatches(requests, metadata, batchProcessor, progressState, per
     // リクエストサイズを見積もり、閾値に応じてインラインかファイルバッチを選択
     const INLINE_THRESHOLD = 15 * 1024 * 1024; // 15MB（安全マージン込み）
     
-    const payloadEstimate = JSON.stringify(requests).length;
+    const payloadEstimate = estimateRequestsPayloadBytes(requests);
     const sizeMB = (payloadEstimate / 1024 / 1024).toFixed(2);
     
     console.log(`[バッチ] ${requests.length} 件のリクエストを送信中... (見積もりサイズ: ${sizeMB} MB)`);
@@ -252,7 +262,7 @@ async function runSingleBatch(requests, batchProcessor, progressState, displayNa
     
     const INLINE_THRESHOLD = 15 * 1024 * 1024; // 15MB
     
-    const payloadEstimate = JSON.stringify(requests).length;
+    const payloadEstimate = estimateRequestsPayloadBytes(requests);
     const sizeMB = (payloadEstimate / 1024 / 1024).toFixed(2);
     
     console.log(`[バッチ] リクエスト送信中... (見積もりサイズ: ${sizeMB} MB)`);
@@ -774,25 +784,12 @@ async function extractEmbeddedTextFromPdfPages(pdfPath, pageNumbers) {
         return result;
     }
 
-    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-    const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
-    const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
-    const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfPath));
 
-    const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBytes),
-        standardFontDataUrl,
-        cMapUrl,
-        cMapPacked: true,
-        useSystemFonts: false,
-        disableFontFace: true,
-        useWorkerFetch: false,
-        isEvalSupported: false
-    });
-
-    const srcPdf = await loadingTask.promise;
+    let srcPdf = null;
     try {
+        srcPdf = await loadingTask.promise;
         for (const pageNum of pageNumbers) {
             const page = await srcPdf.getPage(pageNum);
             const textContent = await page.getTextContent();
@@ -810,31 +807,15 @@ async function extractEmbeddedTextFromPdfPages(pdfPath, pageNumbers) {
             }
         }
     } finally {
-        if (typeof srcPdf.cleanup === 'function') {
-            srcPdf.cleanup();
-        }
+        await cleanupPdfResources(srcPdf, loadingTask);
     }
 
     return result;
 }
 
 async function getPdfPageCount(pdfPath) {
-    const pdfjsPackageDir = path.dirname(require.resolve('pdfjs-dist/package.json'));
-    const standardFontDataUrl = path.join(pdfjsPackageDir, 'standard_fonts') + path.sep;
-    const cMapUrl = path.join(pdfjsPackageDir, 'cmaps') + path.sep;
-    const pdfBytes = fs.readFileSync(pdfPath);
     const pdfjsLib = await loadPdfjsLib();
-
-    const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBytes),
-        standardFontDataUrl,
-        cMapUrl,
-        cMapPacked: true,
-        useSystemFonts: false,
-        disableFontFace: true,
-        useWorkerFetch: false,
-        isEvalSupported: false
-    });
+    const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfPath));
 
     let srcPdf = null;
     try {
@@ -878,9 +859,9 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     ensureWritableOutputPath(errorPath, 'OCR中間結果ファイル');
 
     console.log(`[情報] AI: ${ndlocrOnly ? '使用しない' : getAiModelLabel(aiProvider)} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${useNdlocr ? (ndlocrOnly ? 'Only' : 'Pre-OCR') : 'Off'} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
-    const pdfBuffer = await fsPromises.readFile(pdfPath);
     const totalPages = await getPdfPageCount(pdfPath);
     let srcDoc = null;
+    let pdfBuffer = null;
     let pdfLibLoadFailed = false;
     
     const actualEndPage = endPage || totalPages;
@@ -1126,8 +1107,10 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             } else {
                 if (!srcDoc && !pdfLibLoadFailed) {
                     try {
+                        pdfBuffer = await fsPromises.readFile(pdfPath);
                         srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
                     } catch (e) {
+                        pdfBuffer = null;
                         pdfLibLoadFailed = true;
                         console.warn(`[警告] PDFの部分切り出しに失敗したため、ページ画像化でOCRします: ${e.message}`);
                     }
@@ -1152,6 +1135,11 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             
             batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch });
         }
+
+        // PDFDocument は元PDF全体を保持するため、API送信前に参照を解放する。
+        // 特に大容量PDFでは、リクエスト本文との同時保持を避ける必要がある。
+        srcDoc = null;
+        pdfBuffer = null;
 
         // 2. Run Batch(es) with Retry Logic
         // 全ページが白紙ならリクエストは0件。APIキー確認を含むprovider初期化も行わない。
@@ -1774,5 +1762,6 @@ module.exports = {
     odtToText,
     pptxToText,
     imageToText,
-    getOcrPrompt
+    getOcrPrompt,
+    estimateRequestsPayloadBytes
 };

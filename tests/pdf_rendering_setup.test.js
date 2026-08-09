@@ -26,6 +26,14 @@ test('PDF document parameters disable font face so glyphs render as outlines', (
     assert.equal(parameters.useSystemFonts, false);
 });
 
+test('PDF document parameters keep file paths lazy instead of copying the whole PDF', () => {
+    const pdfPath = require('node:path').resolve('large-input.pdf');
+    const parameters = buildDocumentParameters(pdfPath);
+
+    assert.equal(parameters.url, pdfPath);
+    assert.equal(Object.hasOwn(parameters, 'data'), false);
+});
+
 // CMap と標準フォントは pdfjs の Node 用リーダーに任せず自前で読みます。
 // これが無いと CJK フォントのグリフを解決できません。
 test('PDF document parameters supply file-based CMap and standard font readers', () => {

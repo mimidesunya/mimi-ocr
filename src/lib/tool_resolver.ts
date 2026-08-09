@@ -12,6 +12,11 @@ const FFMPEG_SHA_URL = `${FFMPEG_ZIP_URL}.sha256`;
 const NDLOCR_RELEASE_API_URL = 'https://api.github.com/repos/ndl-lab/ndlocr-lite/releases/latest';
 const NDLOCR_SOURCE_FALLBACK_URL = 'https://github.com/ndl-lab/ndlocr-lite/archive/refs/heads/master.zip';
 const REAZON_K2_PACKAGE_SPEC = 'git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/k2-asr';
+const VIBEASR_CPP_REPOSITORY = 'https://github.com/microsoft/VibeASR.cpp.git';
+const VIBEASR_CPP_REVISION = '5cbce71c65911a7e10639ac13b6ab6929e4c8f9e';
+const VIBEASR_DEFAULT_MODEL_ID = 'microsoft/VibeVoice-ASR-BitNet';
+const VIBEASR_VAE_FILENAME = 'vibeasr-vae-encoder-i8_s.gguf';
+const VIBEASR_LM_FILENAME = 'vibeasr-lm-i2_s-embed-q6_k.gguf';
 
 function getToolsRoot() {
     const envDir = String(process.env.MIMI_TOOLS_DIR || '').trim();
@@ -505,9 +510,158 @@ async function resolveReazonK2(settings: any = {}) {
     };
 }
 
+function positiveInt(value, fallback, min = 1, max = 256) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    if (!Number.isFinite(parsed) || parsed < min) return fallback;
+    return Math.min(parsed, max);
+}
+
+function findVibeAsrBinary(sourceDir) {
+    const filename = process.platform === 'win32' ? 'asr_stream_server.exe' : 'asr_stream_server';
+    const candidates = [
+        path.join(sourceDir, 'build', 'bin', filename),
+        path.join(sourceDir, 'build', 'bin', 'Release', filename),
+        path.join(sourceDir, 'build', 'Release', filename),
+    ];
+    return candidates.find(isExecutableFile) || candidates[0];
+}
+
+function requireTool(commandName, message) {
+    const resolved = findOnPath(process.platform === 'win32' ? `${commandName}.exe` : commandName)
+        || findOnPath(commandName);
+    if (!resolved) throw new Error(message);
+    return resolved;
+}
+
+function ensureVibeAsrSource(sourceDir) {
+    const cmakeFile = path.join(sourceDir, 'CMakeLists.txt');
+    if (fs.existsSync(cmakeFile)) return;
+    if (fs.existsSync(sourceDir)) {
+        throw new Error(`VibeASR.cpp の保存先が不完全です。削除して再実行するか tools.vibeVoiceAsr.sourceDir を変更してください: ${sourceDir}`);
+    }
+
+    const git = requireTool('git', 'VibeASR.cpp の自動準備には Git が必要です。Gitをインストールするか、tools.vibeVoiceAsr.binaryPath にビルド済み asr_stream_server を指定してください。');
+    console.log('[tools] Microsoft VibeASR.cpp を取得します。');
+    ensureDir(path.dirname(sourceDir));
+    const stagingDir = `${sourceDir}.staging-${process.pid}`;
+    try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        runChecked(git, ['clone', '--recurse-submodules', VIBEASR_CPP_REPOSITORY, stagingDir], path.dirname(sourceDir));
+        runChecked(git, ['checkout', '--detach', VIBEASR_CPP_REVISION], stagingDir);
+        runChecked(git, ['submodule', 'update', '--init', '--recursive'], stagingDir);
+        if (!fs.existsSync(sourceDir)) fs.renameSync(stagingDir, sourceDir);
+    } finally {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
+}
+
+function buildVibeAsr(sourceDir, settings) {
+    const cmake = requireTool('cmake', 'VibeASR.cpp のビルドには CMake 3.14 以上が必要です。CMakeをインストールするか、tools.vibeVoiceAsr.binaryPath にビルド済み asr_stream_server を指定してください。');
+    const buildDir = path.join(sourceDir, 'build');
+    const configureArgs = [
+        '-S', sourceDir,
+        '-B', buildDir,
+        '-DCMAKE_BUILD_TYPE=Release',
+        '-DGGML_CCACHE=OFF',
+    ];
+
+    if (process.platform === 'win32') {
+        const cCompiler = String(settings.cCompiler || '').trim() || requireTool('gcc', 'Windows版 VibeASR.cpp のビルドには MinGW-w64 GCC が必要です。');
+        const cxxCompiler = String(settings.cxxCompiler || '').trim() || requireTool('g++', 'Windows版 VibeASR.cpp のビルドには MinGW-w64 G++ が必要です。');
+        const makeProgram = String(settings.makePath || '').trim() || requireTool('mingw32-make', 'Windows版 VibeASR.cpp のビルドには mingw32-make が必要です。');
+        configureArgs.push(
+            '-G', 'MinGW Makefiles',
+            `-DCMAKE_C_COMPILER=${cCompiler}`,
+            `-DCMAKE_CXX_COMPILER=${cxxCompiler}`,
+            `-DCMAKE_MAKE_PROGRAM=${makeProgram}`,
+        );
+    }
+
+    console.log('[tools] VibeASR.cpp のCPU推論ランタイムをビルドします。');
+    runChecked(cmake, configureArgs, sourceDir);
+    const buildThreads = positiveInt(settings.buildThreads, Math.max(1, Math.min(os.cpus().length, 8)), 1, 64);
+    runChecked(cmake, ['--build', buildDir, '--target', 'asr_stream_server', '--config', 'Release', '-j', String(buildThreads)], sourceDir);
+}
+
+async function downloadFileAtomic(url, destPath, label) {
+    if (isExecutableFile(destPath)) return;
+    ensureDir(path.dirname(destPath));
+    const partialPath = `${destPath}.part-${process.pid}`;
+    console.log(`[tools] ${label} を取得します（初回のみ、完了まで時間がかかります）。`);
+    try {
+        await downloadFile(url, partialPath);
+        const size = fs.statSync(partialPath).size;
+        if (size < 1024 * 1024) {
+            throw new Error(`${label} のダウンロードサイズが不正です: ${size} bytes`);
+        }
+        if (isExecutableFile(destPath)) {
+            fs.rmSync(partialPath, { force: true });
+        } else {
+            fs.renameSync(partialPath, destPath);
+        }
+    } finally {
+        try { fs.rmSync(partialPath, { force: true }); } catch (_err) {}
+    }
+}
+
+async function resolveVibeVoiceAsr(settings: any = {}) {
+    const toolsRoot = getToolsRoot();
+    ensureDir(toolsRoot);
+    const sourceDir = String(settings.sourceDir || '').trim()
+        ? path.resolve(String(settings.sourceDir).trim())
+        : path.join(toolsRoot, 'vibeasr-cpp');
+    const modelDir = String(settings.modelDir || '').trim()
+        ? path.resolve(String(settings.modelDir).trim())
+        : path.join(toolsRoot, 'vibeasr-models', 'vibeasr');
+    const configuredBinary = String(settings.binaryPath || '').trim();
+    const binaryPath = configuredBinary ? path.resolve(configuredBinary) : findVibeAsrBinary(sourceDir);
+    const vaeModelPath = String(settings.vaeModelPath || '').trim()
+        ? path.resolve(String(settings.vaeModelPath).trim())
+        : path.join(modelDir, VIBEASR_VAE_FILENAME);
+    const lmModelPath = String(settings.lmModelPath || '').trim()
+        ? path.resolve(String(settings.lmModelPath).trim())
+        : path.join(modelDir, VIBEASR_LM_FILENAME);
+    const missing = [
+        !isExecutableFile(binaryPath) ? `CPUランタイム: ${binaryPath}` : '',
+        !isExecutableFile(vaeModelPath) ? `VAEモデル: ${vaeModelPath}` : '',
+        !isExecutableFile(lmModelPath) ? `LMモデル: ${lmModelPath}` : '',
+    ].filter(Boolean);
+
+    if (missing.length > 0 && settings.autoInstall === false) {
+        throw new Error(`VibeVoice ASR (CPU) が未準備です。${missing.join(' / ')}。tools.vibeVoiceAsr.autoInstall を true にするか各パスを設定してください。`);
+    }
+
+    if (!isExecutableFile(binaryPath)) {
+        if (configuredBinary) throw new Error(`設定された VibeASR.cpp ランタイムが見つかりません: ${binaryPath}`);
+        ensureVibeAsrSource(sourceDir);
+        buildVibeAsr(sourceDir, settings);
+        if (!isExecutableFile(binaryPath)) {
+            throw new Error(`VibeASR.cpp のビルド後に asr_stream_server が見つかりません: ${binaryPath}`);
+        }
+    }
+
+    const modelId = String(settings.modelId || VIBEASR_DEFAULT_MODEL_ID).trim();
+    if (!isExecutableFile(vaeModelPath)) {
+        if (String(settings.vaeModelPath || '').trim()) throw new Error(`設定されたVAEモデルが見つかりません: ${vaeModelPath}`);
+        await downloadFileAtomic(`https://huggingface.co/${modelId}/resolve/main/${VIBEASR_VAE_FILENAME}?download=true`, vaeModelPath, 'VibeVoice ASR BitNet VAEモデル（約0.7GB）');
+    }
+    if (!isExecutableFile(lmModelPath)) {
+        if (String(settings.lmModelPath || '').trim()) throw new Error(`設定されたLMモデルが見つかりません: ${lmModelPath}`);
+        await downloadFileAtomic(`https://huggingface.co/${modelId}/resolve/main/${VIBEASR_LM_FILENAME}?download=true`, lmModelPath, 'VibeVoice ASR BitNet LMモデル（約1.0GB）');
+    }
+
+    return {
+        binaryPath,
+        vaeModelPath,
+        lmModelPath,
+        threads: positiveInt(settings.threads, 4, 1, 256),
+    };
+}
+
 module.exports = {
     getToolsRoot,
     resolveFfmpegTools,
     resolveNdlocrLite,
     resolveReazonK2,
+    resolveVibeVoiceAsr,
 };

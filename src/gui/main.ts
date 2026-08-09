@@ -449,20 +449,27 @@ ipcMain.handle('execute-script', async (event, {
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
         const provider = audioOptions?.provider === 'reazon-k2'
             ? 'reazon-k2'
-            : audioOptions?.provider === 'gemini'
-                ? 'gemini'
-                : 'openai';
+            : audioOptions?.provider === 'vibevoice-asr'
+                ? 'vibevoice-asr'
+                : audioOptions?.provider === 'gemini'
+                    ? 'gemini'
+                    : 'openai';
         const defaultModel = provider === 'gemini'
             ? getProviderModel('gemini', 'transcription') || 'gemini-3.5-flash'
             : provider === 'reazon-k2'
                 ? 'ja'
-                : getProviderModel('openai', 'transcription') || 'gpt-4o-transcribe-diarize';
+                : provider === 'vibevoice-asr'
+                    ? 'auto'
+                    : getProviderModel('openai', 'transcription') || 'gpt-4o-transcribe-diarize';
         scriptArgs.push(`--target=${target}`);
         scriptArgs.push(`--provider=${provider}`);
         scriptArgs.push(`--model=${audioOptions?.model || defaultModel}`);
         if (provider === 'reazon-k2') {
             scriptArgs.push(`--postprocess-ai=${audioOptions?.postprocessAi || 'auto'}`);
             scriptArgs.push(`--reazon-language=${audioOptions?.model || 'ja'}`);
+        }
+        if (provider === 'vibevoice-asr') {
+            scriptArgs.push(`--postprocess-ai=${audioOptions?.postprocessAi || 'off'}`);
         }
         scriptArgs.push(`--mode=${processMode === 'batch' ? 'batch' : 'sync'}`);
         const bs = parseInt(batchSize, 10);
@@ -567,19 +574,25 @@ ipcMain.handle('execute-script', async (event, {
         const target = ocrTarget === 'houhi' ? '法匪' : '一般';
         const providerId = audioOptions?.provider === 'reazon-k2'
             ? 'reazon-k2'
-            : audioOptions?.provider === 'gemini'
-                ? 'gemini'
-                : 'openai';
+            : audioOptions?.provider === 'vibevoice-asr'
+                ? 'vibevoice-asr'
+                : audioOptions?.provider === 'gemini'
+                    ? 'gemini'
+                    : 'openai';
         const provider = providerId === 'reazon-k2'
             ? 'Reazon K2'
-            : providerId === 'gemini'
-                ? 'Gemini'
-                : 'OpenAI';
+            : providerId === 'vibevoice-asr'
+                ? 'VibeVoice ASR (CPU)'
+                : providerId === 'gemini'
+                    ? 'Gemini'
+                    : 'OpenAI';
         const effectiveAudioModel = audioOptions?.model || (providerId === 'reazon-k2'
             ? 'ja'
-            : getProviderModel(providerId, 'transcription') || '(未設定)');
-        const postprocessLabel = audioOptions?.provider === 'reazon-k2'
-            ? ` / AI後処理: ${audioOptions?.postprocessAi || 'auto'}`
+            : providerId === 'vibevoice-asr'
+                ? 'microsoft/VibeVoice-ASR-BitNet'
+                : getProviderModel(providerId, 'transcription') || '(未設定)');
+        const postprocessLabel = (audioOptions?.provider === 'reazon-k2' || audioOptions?.provider === 'vibevoice-asr')
+            ? ` / AI後処理: ${audioOptions?.postprocessAi || (audioOptions?.provider === 'vibevoice-asr' ? 'off' : 'auto')}`
             : '';
         const modeLabel = processMode === 'batch' ? `バッチ (サイズ ${batchSize || 4})` : '同期';
         const renameLabel = autoRename === true ? 'On' : 'Off';

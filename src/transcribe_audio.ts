@@ -25,7 +25,7 @@ const {
     parseTimestamp,
     formatTimestamp,
 } = require('./lib/audio_silence');
-const { resolveFfmpegTools, resolveReazonK2 } = require('./lib/tool_resolver');
+const { resolveFfmpegTools, resolveReazonK2, resolveVibeVoiceAsr } = require('./lib/tool_resolver');
 
 const SUPPORTED_AUDIO_EXTENSIONS = new Set([
     '.mp3',
@@ -55,6 +55,11 @@ const GEMINI_CHUNK_MIN_DURATION_SEC = 2 * 60;
 const REAZON_K2_DEFAULT_CHUNK_SEC = 25;
 const REAZON_K2_MIN_CHUNK_SEC = 5;
 const REAZON_K2_MAX_CHUNK_SEC = 120;
+const DEFAULT_VIBEVOICE_MODEL = 'microsoft/VibeVoice-ASR-BitNet';
+const VIBEVOICE_DEFAULT_CHUNK_SEC = 1200;
+const VIBEVOICE_MIN_CHUNK_SEC = 60;
+const VIBEVOICE_MAX_CHUNK_SEC = 1200;
+const VIBEVOICE_DEFAULT_THREADS = 4;
 const TRANSCRIPT_NAMING_EXCERPT_CHARS = 2000;
 const TRANSCRIPT_AUTO_RENAME_PATTERN = /^\d{4}-\d{2}-\d{2}_(?:音声認識|反訳書)_.+$/;
 
@@ -77,6 +82,7 @@ type TranscriptionOptions = {
     postprocessAi: string;
     silenceTrim: Record<string, any>;
     reazonK2: Record<string, any>;
+    vibeVoiceAsr: Record<string, any>;
     openaiApiKey?: string;
     openaiBaseUrl?: string;
     openaiChatModel?: string;
@@ -185,6 +191,18 @@ function parseArgs(argv: string[]) {
             options.reazonPython = readValue(arg);
         } else if (arg.startsWith('--reazon_python=')) {
             options.reazonPython = arg.slice('--reazon_python='.length).trim();
+        } else if (arg.startsWith('--vibevoice-threads=')) {
+            options.vibevoiceThreads = arg.slice('--vibevoice-threads='.length).trim();
+        } else if (arg === '--vibevoice-threads' || arg === '--vibevoice_threads') {
+            options.vibevoiceThreads = readValue(arg);
+        } else if (arg.startsWith('--vibevoice_threads=')) {
+            options.vibevoiceThreads = arg.slice('--vibevoice_threads='.length).trim();
+        } else if (arg.startsWith('--vibevoice-chunk-sec=')) {
+            options.vibevoiceChunkSec = arg.slice('--vibevoice-chunk-sec='.length).trim();
+        } else if (arg === '--vibevoice-chunk-sec' || arg === '--vibevoice_chunk_sec') {
+            options.vibevoiceChunkSec = readValue(arg);
+        } else if (arg.startsWith('--vibevoice_chunk_sec=')) {
+            options.vibevoiceChunkSec = arg.slice('--vibevoice_chunk_sec='.length).trim();
         } else if (arg === '--trim_silence' || arg === '--trim-silence') {
             options.trimSilence = true;
         } else if (arg === '--no_trim_silence' || arg === '--no-trim-silence') {
@@ -216,6 +234,9 @@ function normalizeProvider(value: any) {
     if (text === 'gemini') return 'gemini';
     if (text === 'reazon' || text === 'reazon-k2' || text === 'reazonspeech' || text === 'sherpa' || text === 'sherpa-onnx') {
         return 'reazon-k2';
+    }
+    if (text === 'vibevoice' || text === 'vibevoice-asr' || text === 'vibevoiceasr' || text === 'vibevoice-bitnet' || text === 'vibeasr') {
+        return 'vibevoice-asr';
     }
     return 'openai';
 }
@@ -285,6 +306,7 @@ function normalizeOptions(cliOptions: Record<string, string | boolean>): Transcr
     const openai = getProviderConfig('openai') || {};
     const gemini = getProviderConfig('gemini') || {};
     const reazonK2Config = config.tools?.reazonK2 || {};
+    const vibeVoiceConfig = config.tools?.vibeVoiceAsr || {};
     const provider = normalizeProvider(cliOptions.provider || transcription.provider || DEFAULT_PROVIDER);
     const target = normalizeTarget(cliOptions.target || transcription.target || DEFAULT_TARGET);
     const language = String(cliOptions.language || transcription.language || 'ja');
@@ -298,12 +320,16 @@ function normalizeOptions(cliOptions: Record<string, string | boolean>): Transcr
         ? gemini.transcriptionModel || DEFAULT_GEMINI_MODEL
         : provider === 'reazon-k2'
             ? transcription.reazonLanguage || reazonK2Config.language || DEFAULT_REAZON_K2_MODEL
-            : openai.transcriptionModel || DEFAULT_OPENAI_MODEL;
+            : provider === 'vibevoice-asr'
+                ? vibeVoiceConfig.modelId || DEFAULT_VIBEVOICE_MODEL
+                : openai.transcriptionModel || DEFAULT_OPENAI_MODEL;
     const reazonLanguage = normalizeReazonLanguage(cliOptions.reazonLanguage || cliOptions.model || transcription.reazonLanguage || reazonK2Config.language || providerModel);
+    const cliModelRaw = String(cliOptions.model || '').trim();
+    const cliModel = cliModelRaw && cliModelRaw.toLowerCase() !== 'auto' ? cliModelRaw : '';
 
     return {
         provider,
-        model: String(cliOptions.model || providerModel || '').trim() || undefined,
+        model: String(cliModel || providerModel || '').trim() || undefined,
         language,
         target,
         mode: normalizeMode(cliOptions.mode || transcription.mode || 'sync'),
@@ -323,6 +349,21 @@ function normalizeOptions(cliOptions: Record<string, string | boolean>): Transcr
             autoInstall: reazonK2Config.autoInstall !== false,
             cacheDir: String(reazonK2Config.cacheDir || '').trim(),
             packageSpec: String(reazonK2Config.packageSpec || '').trim(),
+        },
+        vibeVoiceAsr: {
+            modelId: String(vibeVoiceConfig.modelId || DEFAULT_VIBEVOICE_MODEL).trim(),
+            threads: parsePositiveInt(cliOptions.vibevoiceThreads || transcription.vibeVoiceThreads || vibeVoiceConfig.threads, VIBEVOICE_DEFAULT_THREADS, 1, 256),
+            chunkSeconds: parseNumberOption(cliOptions.vibevoiceChunkSec || transcription.vibeVoiceChunkSec || vibeVoiceConfig.chunkSeconds, VIBEVOICE_DEFAULT_CHUNK_SEC, VIBEVOICE_MIN_CHUNK_SEC, VIBEVOICE_MAX_CHUNK_SEC),
+            autoInstall: vibeVoiceConfig.autoInstall !== false,
+            binaryPath: String(vibeVoiceConfig.binaryPath || '').trim(),
+            vaeModelPath: String(vibeVoiceConfig.vaeModelPath || '').trim(),
+            lmModelPath: String(vibeVoiceConfig.lmModelPath || '').trim(),
+            sourceDir: String(vibeVoiceConfig.sourceDir || '').trim(),
+            modelDir: String(vibeVoiceConfig.modelDir || '').trim(),
+            cCompiler: String(vibeVoiceConfig.cCompiler || '').trim(),
+            cxxCompiler: String(vibeVoiceConfig.cxxCompiler || '').trim(),
+            makePath: String(vibeVoiceConfig.makePath || '').trim(),
+            buildThreads: vibeVoiceConfig.buildThreads,
         },
         openaiApiKey: openai.apiKey || process.env.OPENAI_API_KEY,
         openaiBaseUrl: openai.baseUrl || 'https://api.openai.com/v1/chat/completions',
@@ -406,6 +447,7 @@ async function fetchWithRetry(label: string, requestFactory: () => Promise<Respo
 function defaultModelForProvider(provider: string) {
     if (provider === 'gemini') return DEFAULT_GEMINI_MODEL;
     if (provider === 'reazon-k2') return DEFAULT_REAZON_K2_MODEL;
+    if (provider === 'vibevoice-asr') return DEFAULT_VIBEVOICE_MODEL;
     return DEFAULT_OPENAI_MODEL;
 }
 
@@ -608,6 +650,67 @@ async function createReazonAudioChunks(filePath: string, options: TranscriptionO
     };
 }
 
+async function createVibeVoiceAudioChunks(filePath: string, options: TranscriptionOptions) {
+    const durationSec = await getAudioDurationSeconds(filePath, options.silenceTrim);
+    const chunkSeconds = parseNumberOption(options.vibeVoiceAsr?.chunkSeconds, VIBEVOICE_DEFAULT_CHUNK_SEC, VIBEVOICE_MIN_CHUNK_SEC, VIBEVOICE_MAX_CHUNK_SEC);
+    const ffmpeg = await getFfmpegPathForTranscription(options);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-ocr-vibevoice-'));
+    const chunks: any[] = [];
+
+    const ranges: { startSec: number; durationSec: number }[] = [];
+    if (durationSec && durationSec > 0) {
+        for (let startSec = 0; startSec < durationSec - 0.05; startSec += chunkSeconds) {
+            ranges.push({ startSec, durationSec: Math.min(chunkSeconds, durationSec - startSec) });
+        }
+    } else {
+        ranges.push({ startSec: 0, durationSec: 0 });
+    }
+
+    try {
+        for (let i = 0; i < ranges.length; i++) {
+            const range = ranges[i];
+            const chunkPath = path.join(tempDir, `vibevoice-${String(i + 1).padStart(4, '0')}.wav`);
+            const args = [
+                '-y',
+                '-hide_banner',
+                '-nostdin',
+                '-ss', range.startSec.toFixed(3),
+            ];
+            if (range.durationSec > 0) {
+                args.push('-t', range.durationSec.toFixed(3));
+            }
+            args.push(
+                '-i', filePath,
+                '-vn',
+                '-ac', '1',
+                '-ar', '24000',
+                '-c:a', 'pcm_s16le',
+                chunkPath,
+            );
+            await runProcess(ffmpeg, args);
+            chunks.push({
+                audioPath: chunkPath,
+                startSec: range.startSec,
+                durationSec: range.durationSec,
+                bytes: fs.existsSync(chunkPath) ? fs.statSync(chunkPath).size : 0,
+                temporary: true,
+            });
+        }
+    } catch (err) {
+        for (const chunk of chunks) removeFileQuietly(chunk.audioPath);
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_cleanupError) {}
+        throw err;
+    }
+
+    return {
+        chunks,
+        cleanup: () => {
+            for (const chunk of chunks) removeFileQuietly(chunk.audioPath);
+            try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_err) {}
+        },
+    };
+}
+
 const REAZON_K2_RUNNER = String.raw`
 import argparse
 import json
@@ -738,6 +841,135 @@ function buildReazonRawItems(chunks: any[], results: any[]): TranscriptItem[] {
     }).filter(item => item.text && item.text !== '【文字起こし結果が空です】');
 }
 
+function normalizeVibeVoiceServerTranscript(value: any) {
+    return String(value || '')
+        .replace(/^\s+|\s+$/g, '')
+        .replace(/^<\|im_start\|>\s*assistant\s*/i, '')
+        .replace(/<\|im_end\|>\s*$/i, '')
+        .trim();
+}
+
+function createMarkerReader(child: any) {
+    let buffer = '';
+    let pending: any = null;
+    let closed = false;
+
+    const flush = () => {
+        if (!pending) return;
+        const index = buffer.indexOf(pending.marker);
+        if (index < 0) return;
+        const value = buffer.slice(0, index);
+        buffer = buffer.slice(index + pending.marker.length);
+        const resolve = pending.resolve;
+        pending = null;
+        resolve(value);
+    };
+    const fail = (err: Error) => {
+        if (!pending) return;
+        const reject = pending.reject;
+        pending = null;
+        reject(err);
+    };
+
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (data: string) => {
+        buffer = (buffer + data).replace(/\r\n/g, '\n');
+        flush();
+    });
+    child.on('error', (err: Error) => {
+        closed = true;
+        fail(err);
+    });
+    child.on('close', (code: number | null) => {
+        closed = true;
+        fail(new Error(`VibeASR.cpp が応答前に終了しました (code=${code ?? 'unknown'})`));
+    });
+
+    return (marker: string) => new Promise<string>((resolve, reject) => {
+        if (closed) {
+            reject(new Error('VibeASR.cpp はすでに終了しています。'));
+            return;
+        }
+        if (pending) {
+            reject(new Error('VibeASR.cpp の応答待ちが重複しました。'));
+            return;
+        }
+        pending = { marker, resolve, reject };
+        flush();
+    });
+}
+
+async function runVibeVoiceAsr(chunks: any[], options: TranscriptionOptions) {
+    const resolved = await resolveVibeVoiceAsr(options.vibeVoiceAsr || {});
+    const context = String(options.contextText || '').replace(/\s+/g, ' ').trim().slice(0, 2000);
+    const args = [
+        '--vae-model', resolved.vaeModelPath,
+        '--lm-model', resolved.lmModelPath,
+        '-t', String(resolved.threads || VIBEVOICE_DEFAULT_THREADS),
+        '-c', '16384',
+        '--max-tokens', '5000',
+        '--prompt-format', 'text',
+        '--no-token-stream',
+    ];
+    if (context) args.push('--context', context);
+
+    const child = spawn(resolved.binaryPath, args, {
+        cwd: path.dirname(resolved.binaryPath),
+        windowsHide: true,
+        shell: false,
+    });
+    const waitForMarker = createMarkerReader(child);
+    let stderr = '';
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (data: string) => {
+        stderr = (stderr + data).slice(-8000);
+    });
+
+    const closePromise = new Promise<number | null>(resolve => child.once('close', resolve));
+    try {
+        await waitForMarker('---READY---\n');
+        const results: any[] = [];
+        for (const chunk of chunks) {
+            const audioPath = String(chunk.audioPath || '');
+            if (!audioPath || /[\r\n]/.test(audioPath)) {
+                throw new Error(`VibeASR.cpp に渡せない音声パスです: ${audioPath}`);
+            }
+            child.stdin.write(`${audioPath}\n`);
+            const response = normalizeVibeVoiceServerTranscript(await waitForMarker('---END---\n'));
+            if (!response || /^\[ERROR\]/i.test(response)) {
+                throw new Error(`VibeVoice ASR (CPU) の音声認識に失敗しました: ${response || '出力が空です'}`);
+            }
+            results.push({ path: audioPath, text: response });
+        }
+        child.stdin.end('EXIT\n');
+        const exitCode = await closePromise;
+        if (exitCode !== 0) {
+            throw new Error(`VibeASR.cpp がコード ${exitCode} で終了しました: ${stderr.trim()}`);
+        }
+        return results;
+    } catch (err: any) {
+        if (!child.killed) child.kill();
+        const details = stderr.trim();
+        if (details && !String(err?.message || '').includes(details)) {
+            throw new Error(`${err?.message || String(err)}\n${details}`);
+        }
+        throw err;
+    }
+}
+
+function buildVibeVoiceRawItems(chunks: any[], results: any[]): TranscriptItem[] {
+    return chunks.map((chunk, index) => {
+        const result = results[index] || {};
+        const text = normalizeVibeVoiceServerTranscript(result.text);
+        const startSec = Number(chunk.startSec || 0);
+        return {
+            speaker: '話者不明',
+            time: formatTimestamp(startSec, startSec >= 3600),
+            text,
+        };
+    }).filter(item => item.text);
+}
+
 function offsetTranscriptItems(items: TranscriptItem[] = [], offsetSec = 0) {
     if (!offsetSec) return items;
     return items.map(item => {
@@ -783,6 +1015,20 @@ function summarizeAudioChunking(preprocess: Record<string, any>) {
             engine: 'reazon-k2',
             count: reazonChunks.length,
             chunks: reazonChunks.map((chunk: any) => ({
+                startSec: Number(chunk.startSec.toFixed(3)),
+                durationSec: Number(chunk.durationSec.toFixed(3)),
+                bytes: chunk.bytes,
+            })),
+        };
+    }
+
+    const vibeVoiceChunks = preprocess?.vibeVoiceChunks;
+    if (Array.isArray(vibeVoiceChunks) && vibeVoiceChunks.length > 0) {
+        return {
+            applied: true,
+            engine: 'vibevoice-asr',
+            count: vibeVoiceChunks.length,
+            chunks: vibeVoiceChunks.map((chunk: any) => ({
                 startSec: Number(chunk.startSec.toFixed(3)),
                 durationSec: Number(chunk.durationSec.toFixed(3)),
                 bytes: chunk.bytes,
@@ -1552,7 +1798,7 @@ function buildTranscriptPostprocessPrompt(fileName: string, items: TranscriptIte
         '日本語のローカル音声認識結果を、Markdown化に使う構造化JSONへ整えるアシスタントです。',
         '',
         '# TASK',
-        'ReazonSpeech K2 / sherpa-onnx の文字起こし結果を読み、発言単位に整形してください。',
+        'ローカル音声認識エンジンの文字起こし結果を読み、発言単位に整形してください。',
         '出力はJSONのみです。Markdownや説明文は出力しないでください。',
         '',
         '# OUTPUT FORMAT',
@@ -1576,15 +1822,20 @@ function buildTranscriptPostprocessPrompt(fileName: string, items: TranscriptIte
     ].filter(Boolean).join('\n');
 }
 
+function localAsrLogLabel(provider: string) {
+    return provider === 'vibevoice-asr' ? 'VibeVoice ASR' : 'Reazon K2';
+}
+
 async function postprocessTranscriptWithAi(filePath: string, rawItems: TranscriptItem[], options: TranscriptionOptions) {
     const provider = selectTextAiProvider(options);
     if (!provider || options.postprocessAi === 'off') {
         return { items: rawItems, overview: {} };
     }
 
+    const logLabel = localAsrLogLabel(options.provider);
     const prompt = buildTranscriptPostprocessPrompt(path.basename(filePath), rawItems, options);
     try {
-        console.log(`[Reazon K2] AI後処理を開始: ${provider}`);
+        console.log(`[${logLabel}] AI後処理を開始: ${provider}`);
         const content = await requestTextAiJson(prompt, options, 'transcript postprocess request', provider);
         const json = extractJson(content) || (() => {
             try { return JSON.parse(String(content || '').trim()); } catch (_err) { return null; }
@@ -1593,9 +1844,9 @@ async function postprocessTranscriptWithAi(filePath: string, rawItems: Transcrip
         if (items.length > 0) {
             return { items, overview: json?.overview || {} };
         }
-        console.warn('[Reazon K2] AI後処理の結果から発言項目を読めなかったため、生起こしを使います。');
+        console.warn(`[${logLabel}] AI後処理の結果から発言項目を読めなかったため、生起こしを使います。`);
     } catch (err: any) {
-        console.warn(`[Reazon K2] AI後処理に失敗したため、生起こしを使います: ${err?.message || String(err)}`);
+        console.warn(`[${logLabel}] AI後処理に失敗したため、生起こしを使います: ${err?.message || String(err)}`);
     }
     return { items: rawItems, overview: {} };
 }
@@ -1622,12 +1873,18 @@ function buildTranscriptionSettingsComment(sourcePath: string, options: Transcri
             autoRename: options.autoRename,
             skipFormattedRename: options.skipFormattedRename,
             context: options.contextText ? 'provided' : 'none',
-            postprocessAi: options.provider === 'reazon-k2' ? options.postprocessAi : undefined,
+            postprocessAi: (options.provider === 'reazon-k2' || options.provider === 'vibevoice-asr') ? options.postprocessAi : undefined,
             reazonK2: options.provider === 'reazon-k2' ? {
                 language: options.reazonK2?.language,
                 device: options.reazonK2?.device,
                 precision: options.reazonK2?.precision,
                 chunkSeconds: options.reazonK2?.chunkSeconds,
+            } : undefined,
+            vibeVoiceAsr: options.provider === 'vibevoice-asr' ? {
+                modelId: options.vibeVoiceAsr?.modelId,
+                runtime: 'VibeASR.cpp (CPU)',
+                threads: options.vibeVoiceAsr?.threads,
+                chunkSeconds: options.vibeVoiceAsr?.chunkSeconds,
             } : undefined,
             silenceTrim: summarizeSilenceTrim(preprocess),
             audioChunking: summarizeAudioChunking(preprocess),
@@ -1871,6 +2128,27 @@ async function transcribeWithReazonK2(filePath: string, options: TranscriptionOp
     }
 }
 
+async function transcribeWithVibeVoiceAsr(filePath: string, options: TranscriptionOptions, preprocess: Record<string, any>) {
+    const chunkSet = await createVibeVoiceAudioChunks(filePath, options);
+    preprocess.vibeVoiceChunks = chunkSet.chunks.map((chunk: any) => ({
+        startSec: chunk.startSec,
+        durationSec: chunk.durationSec,
+        bytes: chunk.bytes,
+    }));
+
+    try {
+        console.log(`[VibeVoice ASR] ${chunkSet.chunks.length} チャンクをCPUでローカル音声認識します (model=${options.vibeVoiceAsr?.modelId || DEFAULT_VIBEVOICE_MODEL}, threads=${options.vibeVoiceAsr?.threads || VIBEVOICE_DEFAULT_THREADS})`);
+        const results = await runVibeVoiceAsr(chunkSet.chunks, options);
+        const rawItems = buildVibeVoiceRawItems(chunkSet.chunks, results);
+        if (rawItems.length === 0) {
+            return { items: [], overview: {} };
+        }
+        return await postprocessTranscriptWithAi(filePath, rawItems, options);
+    } finally {
+        chunkSet.cleanup?.();
+    }
+}
+
 async function transcribeAudio(filePath: string, options: TranscriptionOptions) {
     if (options.provider === 'gemini') return transcribeWithGemini(filePath, options);
     if (options.provider === 'openai') return transcribeWithOpenAI(filePath, options);
@@ -1881,6 +2159,9 @@ async function transcribePreparedAudio(preprocess: Record<string, any>, options:
     const audioPath = preprocess.audioPath;
     if (options.provider === 'reazon-k2') {
         return transcribeWithReazonK2(audioPath, options, preprocess);
+    }
+    if (options.provider === 'vibevoice-asr') {
+        return transcribeWithVibeVoiceAsr(audioPath, options, preprocess);
     }
 
     if (options.provider !== 'gemini' || fs.statSync(audioPath).size <= GEMINI_INLINE_MAX_AUDIO_BYTES) {
@@ -1921,11 +2202,12 @@ function printUsage() {
     console.log(' 音声ファイルを Markdown に変換します。');
     console.log('');
     console.log(' 使い方:');
-    console.log('   node transcribe_audio.js --target=general|houhi --provider=openai|gemini|reazon-k2 --mode=sync|batch --batch_size=N --model=MODEL <音声ファイル...>');
+    console.log('   node transcribe_audio.js --target=general|houhi --provider=openai|gemini|reazon-k2|vibevoice-asr --mode=sync|batch --batch_size=N --model=MODEL <音声ファイル...>');
     console.log('');
     console.log(' オプション: --auto_rename / --no_auto_rename / --skip_formatted_rename / --context-text <text> / --context-file <path>');
     console.log('           --trim_silence / --no_trim_silence / --silence_threshold_db=N / --min_silence_sec=N / --silence_padding_sec=N');
     console.log('           Reazon K2: --postprocess-ai=auto|gemini|openai|off / --reazon-language=ja|ja-en|ja-en-mls-5k / --reazon-device=cpu|cuda|coreml / --reazon-precision=fp32|int8|int8-fp32 / --reazon-chunk-sec=N');
+    console.log('           VibeVoice ASR (CPU): --postprocess-ai=auto|gemini|openai|off / --vibevoice-threads=N / --vibevoice-chunk-sec=N (BitNet + VibeASR.cpp、GPU不要)');
     console.log(' 既存Markdownがある場合はOCRと同様にスキップし、--auto_rename 指定時は改名だけ実行します。');
     console.log(' 対応拡張子: ' + Array.from(SUPPORTED_AUDIO_EXTENSIONS).join(', '));
     console.log('-------------------------------------------------------');
@@ -2029,12 +2311,15 @@ async function processAudioFiles(files: string[], options: TranscriptionOptions,
     }
 
     let ok = true;
-    const effectiveBatchSize = (options.provider === 'gemini' || options.provider === 'reazon-k2') ? 1 : options.batchSize;
+    const effectiveBatchSize = (options.provider === 'gemini' || options.provider === 'reazon-k2' || options.provider === 'vibevoice-asr') ? 1 : options.batchSize;
     if (options.provider === 'gemini' && options.batchSize > effectiveBatchSize) {
         console.log(`[情報] Gemini音声認識は大容量アップロード安定化のため、実処理は1件ずつ行います`);
     }
     if (options.provider === 'reazon-k2' && options.batchSize > effectiveBatchSize) {
         console.log(`[情報] Reazon K2音声認識はモデルメモリ節約のため、実処理は1件ずつ行います`);
+    }
+    if (options.provider === 'vibevoice-asr' && options.batchSize > effectiveBatchSize) {
+        console.log(`[情報] VibeVoice ASRはモデルメモリ節約のため、実処理は1件ずつ行います`);
     }
     for (let i = 0; i < files.length; i += effectiveBatchSize) {
         const chunk = files.slice(i, i + effectiveBatchSize);
@@ -2065,6 +2350,9 @@ async function main() {
     console.log(`[情報] モデル: ${model}`);
     if (options.provider === 'reazon-k2') {
         console.log(`[情報] Reazon K2: language=${options.reazonK2.language} / device=${options.reazonK2.device} / precision=${options.reazonK2.precision} / chunk=${options.reazonK2.chunkSeconds}s / AI後処理=${options.postprocessAi}`);
+    }
+    if (options.provider === 'vibevoice-asr') {
+        console.log(`[情報] VibeVoice ASR (CPU): model=${options.vibeVoiceAsr.modelId} / threads=${options.vibeVoiceAsr.threads} / chunk=${options.vibeVoiceAsr.chunkSeconds}s / AI後処理=${options.postprocessAi}`);
     }
     console.log(`[情報] 出力形式: ${options.target === 'houhi' ? '法匪' : '一般'}`);
     console.log(`[情報] モード: ${options.mode === 'batch' ? `バッチ (サイズ ${options.batchSize})` : '同期'}`);
@@ -2103,6 +2391,9 @@ module.exports = {
     buildTranscriptPrompt,
     buildTranscriptNamingPrompt,
     buildTranscriptPostprocessPrompt,
+    normalizeVibeVoiceServerTranscript,
+    createMarkerReader,
+    buildVibeVoiceRawItems,
     getOriginalFilenameDate,
     createGeminiAudioChunks,
 };

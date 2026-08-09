@@ -801,6 +801,7 @@
                         <button class="toggle-btn active" data-audio-model="gemini:gemini-3.5-flash">Gemini 3.5</button>
                         <button class="toggle-btn" data-audio-model="openai:gpt-4o-transcribe-diarize">OpenAI diarize</button>
                         <button class="toggle-btn" data-audio-model="reazon-k2:ja:auto">Reazon K2+AI</button>
+                        <button class="toggle-btn" data-audio-model="vibevoice-asr:auto:off">VibeVoice CPU</button>
                     </div>
                 </div>
             </div>
@@ -1026,7 +1027,13 @@
                                     <input class="settings-input" id="cfgReazonPrecision" type="text" placeholder="fp32 / int8 / int8-fp32">
                                     <label class="option-label" for="cfgReazonChunkSec">Reazon分割秒</label>
                                     <input class="settings-input" id="cfgReazonChunkSec" type="number" min="5" max="120" value="25">
-                                    <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite と ReazonSpeech K2 は初回使用時にアプリ標準の保存先へ自動準備します。分割復元は内蔵エンジンで処理するため追加ソフトは不要です。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。</div>
+                                    <label class="option-label" for="cfgVibeVoiceBinaryPath">VibeASR.cpp 実行ファイル</label>
+                                    <input class="settings-input" id="cfgVibeVoiceBinaryPath" type="text" placeholder="未指定なら自動準備">
+                                    <label class="option-label" for="cfgVibeVoiceThreads">VibeVoice CPUスレッド数</label>
+                                    <input class="settings-input" id="cfgVibeVoiceThreads" type="number" min="1" max="256" value="4">
+                                    <label class="option-label" for="cfgVibeVoiceChunkSec">VibeVoice分割秒</label>
+                                    <input class="settings-input" id="cfgVibeVoiceChunkSec" type="number" min="60" max="1200" value="1200">
+                                    <div class="settings-note">法匪テンプレートは同梱版を使います。ndlocr-lite と ReazonSpeech K2 は初回使用時にアプリ標準の保存先へ自動準備します。分割復元は内蔵エンジンで処理するため追加ソフトは不要です。ffmpeg は Windows では自動準備し、Mac では Homebrew などで入れたものを使います。VibeVoice はCPU専用のBitNetモデルとMicrosoft公式VibeASR.cppを使い、初回にランタイムのビルドと約1.7GBのモデル取得を行います。GPUやPyTorchは使いません。Windowsの自動ビルドにはCMakeとMinGW-w64が必要です。公開ベンチマークに日本語は含まれないため、日本語文書では結果を確認して利用してください。</div>
                                 </div>
                             </details>
                         </div>

@@ -442,6 +442,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ndlocrLite = config?.tools?.ndlocrLite || {};
         const stitchEngine = config?.tools?.stitchEngine || {};
         const reazonK2 = config?.tools?.reazonK2 || {};
+        const vibeVoiceAsr = config?.tools?.vibeVoiceAsr || {};
         const toolsRootDir = config?.tools?.rootDir || '';
 
         setInputValue('cfgGeminiApiKey', gemini.apiKey || '');
@@ -465,6 +466,9 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgReazonDevice', reazonK2.device || 'cpu');
         setInputValue('cfgReazonPrecision', reazonK2.precision || 'fp32');
         setInputValue('cfgReazonChunkSec', positiveNumber(reazonK2.chunkSeconds, 25, 5, 120));
+        setInputValue('cfgVibeVoiceBinaryPath', vibeVoiceAsr.binaryPath || '');
+        setInputValue('cfgVibeVoiceThreads', positiveInt(vibeVoiceAsr.threads, 4, 1, 256));
+        setInputValue('cfgVibeVoiceChunkSec', positiveNumber(vibeVoiceAsr.chunkSeconds, 1200, 60, 1200));
     }
 
     function readConfigForm() {
@@ -473,6 +477,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const defaultProviders = defaults.providers || {};
         const defaultTools = defaults.tools || {};
         const previousTools = isPlainObject(previousUser.tools) ? previousUser.tools : {};
+        const previousVibeVoice = isPlainObject(previousTools.vibeVoiceAsr) ? previousTools.vibeVoiceAsr : {};
+        const defaultVibeVoice = isPlainObject(defaultTools.vibeVoiceAsr) ? defaultTools.vibeVoiceAsr : {};
 
         const config: any = {
             providers: {},
@@ -537,9 +543,23 @@ document.addEventListener('DOMContentLoaded', () => {
             autoInstall: true,
             cacheDir: '',
         };
+        const vibeVoiceAsr = {
+            binaryPath: inputValue('cfgVibeVoiceBinaryPath'),
+            vaeModelPath: previousVibeVoice.vaeModelPath || defaultVibeVoice.vaeModelPath || '',
+            lmModelPath: previousVibeVoice.lmModelPath || defaultVibeVoice.lmModelPath || '',
+            sourceDir: previousVibeVoice.sourceDir || defaultVibeVoice.sourceDir || '',
+            modelDir: previousVibeVoice.modelDir || defaultVibeVoice.modelDir || '',
+            modelId: previousVibeVoice.modelId || defaultVibeVoice.modelId || 'microsoft/VibeVoice-ASR-BitNet',
+            threads: positiveInt(inputValue('cfgVibeVoiceThreads'), 4, 1, 256),
+            chunkSeconds: positiveNumber(inputValue('cfgVibeVoiceChunkSec'), 1200, 60, 1200),
+            autoInstall: previousVibeVoice.autoInstall !== false,
+            cCompiler: previousVibeVoice.cCompiler || defaultVibeVoice.cCompiler || '',
+            cxxCompiler: previousVibeVoice.cxxCompiler || defaultVibeVoice.cxxCompiler || '',
+            makePath: previousVibeVoice.makePath || defaultVibeVoice.makePath || '',
+        };
         const tools: any = {};
         Object.entries(previousTools).forEach(([key, value]) => {
-            if (key !== 'rootDir' && key !== 'ndlocrLite' && key !== 'stitchEngine' && key !== 'reazonK2') {
+            if (key !== 'rootDir' && key !== 'ndlocrLite' && key !== 'stitchEngine' && key !== 'reazonK2' && key !== 'vibeVoiceAsr') {
                 tools[key] = value;
             }
         });
@@ -555,6 +575,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (!deepEqual(reazonK2, defaultTools.reazonK2 || {})) {
             tools.reazonK2 = reazonK2;
+        }
+        if (!deepEqual(vibeVoiceAsr, defaultTools.vibeVoiceAsr || {})) {
+            tools.vibeVoiceAsr = vibeVoiceAsr;
         }
         if (Object.keys(tools).length > 0) {
             config.tools = tools;
@@ -1403,6 +1426,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 provider: 'reazon-k2',
                 model: normalizeReazonLanguage(model || 'ja'),
                 postprocessAi: postprocessAi || 'auto',
+            };
+        }
+        if (provider === 'vibevoice-asr') {
+            return {
+                provider: 'vibevoice-asr',
+                model: 'auto',
+                postprocessAi: postprocessAi || 'off',
             };
         }
         return {

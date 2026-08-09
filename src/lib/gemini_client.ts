@@ -30,6 +30,8 @@ const FALLBACK_APP_DEFAULTS = {
         reazonDevice: 'cpu',
         reazonPrecision: 'fp32',
         reazonChunkSec: 25,
+        vibeVoiceThreads: 4,
+        vibeVoiceChunkSec: 1200,
         silenceTrim: {
             enabled: false,
             thresholdDb: -35,
@@ -61,6 +63,20 @@ const FALLBACK_APP_DEFAULTS = {
             chunkSeconds: 25,
             autoInstall: true,
             cacheDir: ''
+        },
+        vibeVoiceAsr: {
+            binaryPath: '',
+            vaeModelPath: '',
+            lmModelPath: '',
+            sourceDir: '',
+            modelDir: '',
+            modelId: 'microsoft/VibeVoice-ASR-BitNet',
+            threads: 4,
+            chunkSeconds: 1200,
+            autoInstall: true,
+            cCompiler: '',
+            cxxCompiler: '',
+            makePath: ''
         }
     }
 };
