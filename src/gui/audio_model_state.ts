@@ -2,11 +2,14 @@ type AudioModelSelection = {
     provider: 'gemini' | 'openai' | 'reazon-k2' | 'vibevoice-asr';
     model: string;
     postprocessAi?: string;
+    postprocessModel?: string;
 };
 
 type AudioExecutionOptions = AudioModelSelection;
 
 const DEFAULT_AUDIO_MODEL_SELECTION = 'gemini:auto';
+const DEFAULT_AUDIO_CHAT_MODEL_SELECTION = 'auto:auto';
+const DEFAULT_OCR_MODEL_SELECTION = 'gemini:auto';
 const LEGACY_AUDIO_MODEL_SELECTIONS: Record<string, string> = {
     'gemini:gemini-3.5-flash': 'gemini:auto',
     'openai:gpt-4o-transcribe-diarize': 'openai:auto',
@@ -20,6 +23,52 @@ function normalizeReazonLanguage(value: any) {
 function normalizePostprocessAi(value: any, fallback: string) {
     const text = String(value || '').trim().toLowerCase();
     return ['auto', 'gemini', 'openai', 'off'].includes(text) ? text : fallback;
+}
+
+function splitProviderModelSelection(value: any) {
+    const raw = String(value || '').trim();
+    const separatorIndex = raw.indexOf(':');
+    if (separatorIndex < 0) return [raw, ''];
+    return [raw.slice(0, separatorIndex), raw.slice(separatorIndex + 1)];
+}
+
+function normalizeAudioChatModelSelection(value: any) {
+    const [rawProvider, rawModel] = splitProviderModelSelection(value);
+    const provider = String(rawProvider || '').trim().toLowerCase();
+    const model = String(rawModel || '').trim() || 'auto';
+    if (provider === 'gemini' || provider === 'openai') {
+        return `${provider}:${model}`;
+    }
+    return DEFAULT_AUDIO_CHAT_MODEL_SELECTION;
+}
+
+function normalizeOcrModelSelection(value: any) {
+    const [rawProvider, rawModel] = splitProviderModelSelection(value);
+    const provider = String(rawProvider || '').trim().toLowerCase();
+    const model = String(rawModel || '').trim() || 'auto';
+    if (provider === 'gemini' || provider === 'claude' || provider === 'openai') {
+        return `${provider}:${model}`;
+    }
+    return DEFAULT_OCR_MODEL_SELECTION;
+}
+
+function parseOcrModelSelection(value: any) {
+    const [provider, model] = splitProviderModelSelection(normalizeOcrModelSelection(value));
+    return {
+        provider,
+        model: String(model || 'auto').trim() || 'auto',
+    };
+}
+
+function parseAudioChatModelSelection(value: any) {
+    const [provider, model] = splitProviderModelSelection(normalizeAudioChatModelSelection(value));
+    if (provider === 'gemini' || provider === 'openai') {
+        return {
+            postprocessAi: provider,
+            ...(model && model !== 'auto' ? { postprocessModel: model } : {}),
+        };
+    }
+    return { postprocessAi: 'auto' };
 }
 
 function normalizeAudioModelSelection(value: any) {
@@ -45,6 +94,10 @@ function migrateAudioGuiState(value: any) {
         ...value,
         currentAudioModel: normalizeAudioModelSelection(value.currentAudioModel),
         currentAudioPostprocess: value.currentAudioPostprocess !== false,
+        currentAudioChatModel: normalizeAudioChatModelSelection(value.currentAudioChatModel),
+        currentOcrModel: normalizeOcrModelSelection(
+            value.currentOcrModel || `${String(value.currentAiProvider || 'gemini').trim()}:auto`,
+        ),
     };
 }
 
@@ -87,6 +140,10 @@ function resolveAudioExecutionOptions(
         postprocessAi || selection.postprocessAi,
         selection.provider === 'vibevoice-asr' ? 'off' : 'auto',
     );
+    const requestedPostprocessModel = String(audioOptions?.postprocessModel || '').trim();
+    const resolvedPostprocessModel = (resolvedPostprocessAi === 'gemini' || resolvedPostprocessAi === 'openai')
+        ? requestedPostprocessModel || getProviderModel(resolvedPostprocessAi, 'chat')
+        : '';
     const requestedModel = String(selection.model || '').trim();
     const useConfiguredModel = !requestedModel || requestedModel.toLowerCase() === 'auto';
 
@@ -94,6 +151,7 @@ function resolveAudioExecutionOptions(
         return {
             ...selection,
             postprocessAi: resolvedPostprocessAi,
+            ...(resolvedPostprocessModel ? { postprocessModel: resolvedPostprocessModel } : {}),
             model: useConfiguredModel
                 ? getProviderModel('gemini', 'transcription') || 'gemini-3.5-transcribe'
                 : requestedModel,
@@ -103,19 +161,30 @@ function resolveAudioExecutionOptions(
         return {
             ...selection,
             postprocessAi: resolvedPostprocessAi,
+            ...(resolvedPostprocessModel ? { postprocessModel: resolvedPostprocessModel } : {}),
             model: useConfiguredModel
                 ? getProviderModel('openai', 'transcription') || 'gpt-4o-transcribe-diarize'
                 : requestedModel,
         };
     }
-    return { ...selection, postprocessAi: resolvedPostprocessAi };
+    return {
+        ...selection,
+        postprocessAi: resolvedPostprocessAi,
+        ...(resolvedPostprocessModel ? { postprocessModel: resolvedPostprocessModel } : {}),
+    };
 }
 
 const audioModelStateApi = {
     DEFAULT_AUDIO_MODEL_SELECTION,
+    DEFAULT_AUDIO_CHAT_MODEL_SELECTION,
+    DEFAULT_OCR_MODEL_SELECTION,
     normalizeAudioModelSelection,
+    normalizeAudioChatModelSelection,
+    normalizeOcrModelSelection,
     migrateAudioGuiState,
     parseAudioModelSelection,
+    parseAudioChatModelSelection,
+    parseOcrModelSelection,
     resolveAudioExecutionOptions,
 };
 

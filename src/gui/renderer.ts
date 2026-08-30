@@ -43,25 +43,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const toolHelpOkBtn   = document.getElementById('toolHelpOkBtn') as HTMLButtonElement;
 
     const ocrBtns      = document.querySelectorAll<HTMLElement>('[data-ocr-mode]');
-    const aiBtns       = document.querySelectorAll<HTMLElement>('[data-ai]');
     const modeBtns     = document.querySelectorAll<HTMLElement>('[data-mode]');
     const pdfTextBtns  = document.querySelectorAll<HTMLElement>('[data-pdftext]');
     const autoRenameBtns = document.querySelectorAll<HTMLElement>('[data-auto-rename]');
     const formattedRenameBtns = document.querySelectorAll<HTMLElement>('[data-skip-formatted-rename]');
     const silenceTrimBtns = document.querySelectorAll<HTMLElement>('[data-silence-trim]');
     const ocrTargetBtns = document.querySelectorAll<HTMLElement>('[data-ocr-target]');
-    const audioModelBtns = document.querySelectorAll<HTMLElement>('[data-audio-model]');
+    const audioModelSelect = document.getElementById('audioModelSelect') as HTMLSelectElement;
+    const ocrModelSelect = document.getElementById('ocrModelSelect') as HTMLSelectElement;
     const audioPostprocessOption = document.getElementById('audioPostprocessOption') as HTMLElement;
     const audioPostprocessCheckbox = document.getElementById('audioPostprocessCheckbox') as HTMLInputElement;
+    const audioChatModelSelect = document.getElementById('audioChatModelSelect') as HTMLSelectElement;
+    const labelAudioChatModel = document.getElementById('labelAudioChatModel') as HTMLElement;
     const pdfPageTypeBtns = document.querySelectorAll<HTMLElement>('[data-pdf-page-type]');
     const pdfTwoUpBtns = document.querySelectorAll<HTMLElement>('[data-pdf-two-up]');
     const pdfDirectionBtns = document.querySelectorAll<HTMLElement>('[data-pdf-direction]');
 
-    const toggleAi     = document.getElementById('toggleAi') as HTMLElement;
     const toggleMode   = document.getElementById('toggleMode') as HTMLElement;
     const toggleOcr    = document.getElementById('toggleOcr') as HTMLElement;
     const toggleOcrTarget = document.getElementById('toggleOcrTarget') as HTMLElement;
-    const toggleAudioModel = document.getElementById('toggleAudioModel') as HTMLElement;
     const togglePdfText = document.getElementById('togglePdfText') as HTMLElement;
     const toggleAutoRename = document.getElementById('toggleAutoRename') as HTMLElement;
     const toggleFormattedRename = document.getElementById('toggleFormattedRename') as HTMLElement;
@@ -84,6 +84,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentOcrTarget: OcrTarget = 'general';
     let currentAudioModel = audioModelState.DEFAULT_AUDIO_MODEL_SELECTION;
     let currentAudioPostprocess = true;
+    let currentAudioChatModel = audioModelState.DEFAULT_AUDIO_CHAT_MODEL_SELECTION;
+    let currentOcrModel = audioModelState.DEFAULT_OCR_MODEL_SELECTION;
     let currentAiProvider = 'gemini';
     let currentProcessMode = 'sync';
     let currentOcrMode = 'ndlocr_ai'; // ai | ndlocr_ai | ndlocr_only
@@ -141,7 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     items: [
                         '出力は、ふつうの文章なら「一般」、裁判資料の形に寄せるなら「法匪」を選びます。',
                         'OCRは、既定では「ndlocr+AI」を使います。テキスト主体のPDFでは「AIのみ」も選べます。',
-                        'AIは、速さや料金を重視するならGemini、必要に応じてClaudeやOpenAIを選びます。',
+                        'OCRモデルのコンボボックスで、Gemini、Claude、OpenAIの設定済みモデルを選びます。',
                         'バッチは大量ページ向けです。止まりやすいときは「同期」に戻します。'
                     ]
                 },
@@ -168,9 +170,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 {
                     title: '主な設定',
                     items: [
-                        '音声AIは、Gemini、OpenAI、Reazon K2を選びます。',
+                        '音声モデルのコンボボックスで、Gemini、OpenAI、Reazon K2、VibeVoiceを選びます。',
                         '出力は、ふつうの議事録なら「一般」、反訳書風にしたいなら「法匪」を選びます。',
-                        '「Chat APIで全体補正」をOnにすると、書き起こし完了後に全文の文脈を確認し、話者名・誤字・句読点をまとめて補正します。',
+                        '「Chat APIで全体補正」をOnにすると、書き起こし完了後に全文の文脈を確認し、話者名・誤字・句読点をまとめて補正します。補正モデルは音声モデルとは別のコンボボックスで選べます。',
                         '無音カットをOnにすると、長い沈黙を先に短くしてからAIへ送ります。'
                     ]
                 },
@@ -494,6 +496,109 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgVibeVoiceChunkSec', positiveNumber(vibeVoiceAsr.chunkSeconds, 1200, 60, 1200));
     }
 
+    function configuredModelList(modelOptions: any, provider: string) {
+        return Array.from(new Set(
+            (Array.isArray(modelOptions?.[provider]) ? modelOptions[provider] : [])
+                .map(value => String(value || '').trim())
+                .filter(Boolean)
+        ));
+    }
+
+    function appendModelOption(parent: HTMLElement, configuredValues: Set<string>, value: string, label: string) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        parent.appendChild(option);
+        configuredValues.add(value);
+    }
+
+    function appendProviderModelGroup(
+        select: HTMLSelectElement,
+        configuredValues: Set<string>,
+        provider: string,
+        label: string,
+        models: string[],
+        autoLabel = '',
+    ) {
+        const group = document.createElement('optgroup');
+        group.label = label;
+        if (autoLabel) appendModelOption(group, configuredValues, `${provider}:auto`, autoLabel);
+        models.forEach(model => appendModelOption(group, configuredValues, `${provider}:${model}`, model));
+        select.appendChild(group);
+    }
+
+    function preserveSavedModelOption(
+        select: HTMLSelectElement,
+        configuredValues: Set<string>,
+        value: string,
+        label: string,
+    ) {
+        if (!configuredValues.has(value)) appendModelOption(select, configuredValues, value, `${label}（保存済み）`);
+    }
+
+    function renderRuntimeModelOptions(modelOptions: any = {}) {
+        const chatModels = modelOptions?.chat || {};
+        const transcriptionModels = modelOptions?.transcription || {};
+
+        const normalizedAudio = audioModelState.normalizeAudioModelSelection(currentAudioModel);
+        const audioValues = new Set<string>();
+        clearElement(audioModelSelect);
+        appendProviderModelGroup(audioModelSelect, audioValues, 'gemini', 'Gemini', configuredModelList(transcriptionModels, 'gemini'), '設定の音声モデル');
+        appendProviderModelGroup(audioModelSelect, audioValues, 'openai', 'OpenAI', configuredModelList(transcriptionModels, 'openai'), '設定の音声モデル');
+        const reazonGroup = document.createElement('optgroup');
+        reazonGroup.label = 'Reazon K2（ローカル）';
+        appendModelOption(reazonGroup, audioValues, 'reazon-k2:ja:auto', '日本語');
+        appendModelOption(reazonGroup, audioValues, 'reazon-k2:ja-en:auto', '日本語・英語');
+        appendModelOption(reazonGroup, audioValues, 'reazon-k2:ja-en-mls-5k:auto', '日本語・英語（MLS 5k）');
+        audioModelSelect.appendChild(reazonGroup);
+        const localGroup = document.createElement('optgroup');
+        localGroup.label = 'VibeVoice（ローカル）';
+        appendModelOption(localGroup, audioValues, 'vibevoice-asr:auto:off', 'VibeVoice ASR（CPU）');
+        audioModelSelect.appendChild(localGroup);
+        preserveSavedModelOption(audioModelSelect, audioValues, normalizedAudio, normalizedAudio);
+        currentAudioModel = normalizedAudio;
+        audioModelSelect.value = currentAudioModel;
+
+        const normalizedOcr = audioModelState.normalizeOcrModelSelection(currentOcrModel);
+        const ocrValues = new Set<string>();
+        clearElement(ocrModelSelect);
+        appendProviderModelGroup(ocrModelSelect, ocrValues, 'gemini', 'Gemini', configuredModelList(chatModels, 'gemini'), '設定の最優先モデル');
+        appendProviderModelGroup(ocrModelSelect, ocrValues, 'claude', 'Claude', configuredModelList(chatModels, 'claude'), '設定モデル');
+        appendProviderModelGroup(ocrModelSelect, ocrValues, 'openai', 'OpenAI', configuredModelList(chatModels, 'openai'), '設定モデル');
+        preserveSavedModelOption(ocrModelSelect, ocrValues, normalizedOcr, normalizedOcr);
+        currentOcrModel = normalizedOcr;
+        currentAiProvider = audioModelState.parseOcrModelSelection(currentOcrModel).provider;
+        ocrModelSelect.value = currentOcrModel;
+
+        const normalizedChat = audioModelState.normalizeAudioChatModelSelection(currentAudioChatModel);
+        const chatValues = new Set<string>();
+        clearElement(audioChatModelSelect);
+        appendModelOption(audioChatModelSelect, chatValues, audioModelState.DEFAULT_AUDIO_CHAT_MODEL_SELECTION, '自動（音声モデルとAPI設定に従う）');
+        appendProviderModelGroup(audioChatModelSelect, chatValues, 'gemini', 'Gemini Chat API', configuredModelList(chatModels, 'gemini'));
+        appendProviderModelGroup(audioChatModelSelect, chatValues, 'openai', 'OpenAI Chat API', configuredModelList(chatModels, 'openai'));
+        const parsedChat = audioModelState.parseAudioChatModelSelection(normalizedChat);
+        preserveSavedModelOption(
+            audioChatModelSelect,
+            chatValues,
+            normalizedChat,
+            parsedChat.postprocessModel ? `${parsedChat.postprocessAi}: ${parsedChat.postprocessModel}` : normalizedChat,
+        );
+        currentAudioChatModel = normalizedChat;
+        audioChatModelSelect.value = currentAudioChatModel;
+    }
+
+    async function refreshRuntimeModelOptions(status?: any) {
+        try {
+            const setupStatus = status || await (window as any).electronAPI.getSetupStatus();
+            renderRuntimeModelOptions(setupStatus?.modelOptions || {
+                chat: setupStatus?.audioChatModels || {},
+                transcription: {},
+            });
+        } catch (_err) {
+            renderRuntimeModelOptions({});
+        }
+    }
+
     function readConfigForm() {
         const defaults = isPlainObject(loadedDefaults) ? loadedDefaults : {};
         const previousUser = isPlainObject(loadedUserConfig) ? loadedUserConfig : {};
@@ -649,6 +754,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const config = readConfigForm();
             const result = await (window as any).electronAPI.saveConfig(config);
             configPathLabel.textContent = result.path || configPathLabel.textContent;
+            await refreshRuntimeModelOptions();
             setConfigStatus('保存しました。次の実行から反映されます。', 'success');
             log('config.json を保存しました。', 'success');
         } catch (err: any) {
@@ -715,6 +821,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const text = await (window as any).electronAPI.readClipboardText();
                 target.value = text || '';
                 target.focus();
+                target.dispatchEvent(new Event('input', { bubbles: true }));
+                setConfigStatus(text ? 'クリップボードから貼り付けました。' : 'クリップボードに文字列がありません。', text ? 'success' : 'normal');
             } catch (err: any) {
                 setConfigStatus(`貼り付けに失敗しました: ${err.message}`, 'error');
             }
@@ -837,20 +945,24 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ---- 音声認識モデル選択 ----
-    audioModelBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            if (btn.classList.contains('disabled')) return;
-            audioModelBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            currentAudioModel = audioModelState.normalizeAudioModelSelection(btn.dataset.audioModel);
-            log(`音声AI変更: ${btn.textContent || currentAudioModel}`);
-            saveGuiState();
-        });
+    audioModelSelect.addEventListener('change', () => {
+        currentAudioModel = audioModelState.normalizeAudioModelSelection(audioModelSelect.value);
+        const selectedLabel = audioModelSelect.selectedOptions[0]?.textContent || currentAudioModel;
+        log(`音声モデル変更: ${selectedLabel}`);
+        saveGuiState();
     });
 
     audioPostprocessCheckbox.addEventListener('change', () => {
         currentAudioPostprocess = audioPostprocessCheckbox.checked;
         log(`Chat API全体補正: ${currentAudioPostprocess ? 'On' : 'Off'}`);
+        applyConstraints();
+        saveGuiState();
+    });
+
+    audioChatModelSelect.addEventListener('change', () => {
+        currentAudioChatModel = audioModelState.normalizeAudioChatModelSelection(audioChatModelSelect.value);
+        const selectedLabel = audioChatModelSelect.selectedOptions[0]?.textContent || currentAudioChatModel;
+        log(`全体補正Chatモデル変更: ${selectedLabel}`);
         saveGuiState();
     });
 
@@ -868,17 +980,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // ---- AI プロバイダー選択 ----
-    aiBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            if (btn.classList.contains('disabled')) return;
-            aiBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            currentAiProvider = btn.dataset.ai || 'gemini';
-            log(`AIプロバイダー変更: ${currentAiProvider}`);
-            applyModeConstraint();
-            saveGuiState();
-        });
+    // ---- OCRモデル選択 ----
+    ocrModelSelect.addEventListener('change', () => {
+        currentOcrModel = audioModelState.normalizeOcrModelSelection(ocrModelSelect.value);
+        currentAiProvider = audioModelState.parseOcrModelSelection(currentOcrModel).provider;
+        const selectedLabel = ocrModelSelect.selectedOptions[0]?.textContent || currentOcrModel;
+        log(`OCRモデル変更: ${selectedLabel}`);
+        applyModeConstraint();
+        saveGuiState();
     });
 
     // ---- 処理モード選択 ----
@@ -1022,12 +1131,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // OCRエンジントグル
         setGroupDisabled(toggleOcr, labelOcr, ocrBtns, !ocr);
         setGroupDisabled(toggleOcrTarget, labelOcrTarget, ocrTargetBtns, !(ocr || audio));
-        setGroupDisabled(toggleAudioModel, labelAudioModel, audioModelBtns, !audio);
+        audioModelSelect.disabled = !audio;
+        labelAudioModel.classList.toggle('disabled', !audio);
         audioPostprocessCheckbox.disabled = !audio;
         audioPostprocessOption.classList.toggle('disabled', !audio);
+        audioChatModelSelect.disabled = !audio || !currentAudioPostprocess;
+        labelAudioChatModel.classList.toggle('disabled', !audio || !currentAudioPostprocess);
 
         // AI / モード / PDFテキスト / バッチサイズ
-        setGroupDisabled(toggleAi, labelAi, aiBtns, !aiEnabled);
+        ocrModelSelect.disabled = !aiEnabled;
+        labelAi.classList.toggle('disabled', !aiEnabled);
         setGroupDisabled(toggleMode, labelMode, modeBtns, !modeEnabled);
         setGroupDisabled(togglePdfText, labelPdfText, pdfTextBtns, !ocr);
         setGroupDisabled(toggleAutoRename, labelAutoRename, autoRenameBtns, !autoRenameEnabled);
@@ -1075,6 +1188,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentOcrTarget,
                 currentAudioModel,
                 currentAudioPostprocess,
+                currentAudioChatModel,
+                currentOcrModel,
                 currentAiProvider,
                 currentProcessMode,
                 currentOcrMode,
@@ -1104,7 +1219,9 @@ document.addEventListener('DOMContentLoaded', () => {
             currentOcrTarget = (state.currentOcrTarget || currentOcrTarget) as OcrTarget;
             currentAudioModel = audioModelState.normalizeAudioModelSelection(state.currentAudioModel || currentAudioModel);
             currentAudioPostprocess = state.currentAudioPostprocess !== false;
-            currentAiProvider = state.currentAiProvider || currentAiProvider;
+            currentAudioChatModel = audioModelState.normalizeAudioChatModelSelection(state.currentAudioChatModel);
+            currentOcrModel = audioModelState.normalizeOcrModelSelection(state.currentOcrModel);
+            currentAiProvider = audioModelState.parseOcrModelSelection(currentOcrModel).provider;
             currentProcessMode = state.currentProcessMode || currentProcessMode;
             currentOcrMode = state.currentOcrMode || currentOcrMode;
             currentPreferPdfText = state.currentPreferPdfText === true;
@@ -1119,11 +1236,12 @@ document.addEventListener('DOMContentLoaded', () => {
             batchSizeInput.value = String(state.batchSize || batchSizeInput.value || '4');
             contextInput.value = String(state.contextText || '');
             audioPostprocessCheckbox.checked = currentAudioPostprocess;
+            audioModelSelect.value = currentAudioModel;
+            audioChatModelSelect.value = currentAudioChatModel;
+            ocrModelSelect.value = currentOcrModel;
 
             toolCards.forEach(card => card.classList.toggle('active', card.dataset.script === currentScript));
             setActiveByData(ocrTargetBtns, 'ocrTarget', currentOcrTarget);
-            setActiveByData(audioModelBtns, 'audioModel', currentAudioModel);
-            setActiveByData(aiBtns, 'ai', currentAiProvider);
             setActiveByData(modeBtns, 'mode', currentProcessMode);
             setActiveByData(ocrBtns, 'ocrMode', currentOcrMode);
             setActiveByData(pdfTextBtns, 'pdftext', String(currentPreferPdfText));
@@ -1133,7 +1251,9 @@ document.addEventListener('DOMContentLoaded', () => {
             setActiveByData(pdfPageTypeBtns, 'pdfPageType', currentPdfPageType);
             setActiveByData(pdfTwoUpBtns, 'pdfTwoUp', String(currentPdfTwoUp));
             setActiveByData(pdfDirectionBtns, 'pdfDirection', currentPdfDirection);
-            if (state.currentAudioModel !== parsedState.currentAudioModel) {
+            if (state.currentAudioModel !== parsedState.currentAudioModel ||
+                state.currentAudioChatModel !== parsedState.currentAudioChatModel ||
+                state.currentOcrModel !== parsedState.currentOcrModel) {
                 localStorage.setItem(GUI_STATE_KEY, JSON.stringify(state));
             }
         } catch (_err) {
@@ -1148,6 +1268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 初期状態
     restoreGuiState();
     applyConstraints();
+    void refreshRuntimeModelOptions();
 
     // ---- ドラッグ＆ドロップ ----
     dropZone.addEventListener('dragover', (e) => {
@@ -1315,11 +1436,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function currentTaskNeedsGemini() {
         if (currentScript === 'transcribe_audio') {
-            return parseAudioModel(currentAudioModel).provider === 'gemini';
+            const transcriptionProvider = parseAudioModel(currentAudioModel).provider;
+            const postprocessProvider = audioModelState.parseAudioChatModelSelection(currentAudioChatModel).postprocessAi;
+            return transcriptionProvider === 'gemini' ||
+                (currentAudioPostprocess && postprocessProvider === 'gemini');
         }
         if (currentScript !== 'ocr') return false;
         const ndlocrOnly = currentOcrMode === 'ndlocr_only';
         return currentAiProvider === 'gemini' && (!ndlocrOnly || currentAutoRename);
+    }
+
+    function currentTaskNeedsOpenAi() {
+        if (currentScript === 'transcribe_audio') {
+            const transcriptionProvider = parseAudioModel(currentAudioModel).provider;
+            const postprocessProvider = audioModelState.parseAudioChatModelSelection(currentAudioChatModel).postprocessAi;
+            return transcriptionProvider === 'openai' ||
+                (currentAudioPostprocess && postprocessProvider === 'openai');
+        }
+        if (currentScript !== 'ocr') return false;
+        const ndlocrOnly = currentOcrMode === 'ndlocr_only';
+        return currentAiProvider === 'openai' && (!ndlocrOnly || currentAutoRename);
     }
 
     function currentTaskNeedsNdlocr() {
@@ -1330,8 +1466,19 @@ document.addEventListener('DOMContentLoaded', () => {
         let status: any = null;
         try {
             status = await (window as any).electronAPI.getSetupStatus();
+            renderRuntimeModelOptions(status?.modelOptions || {
+                chat: status?.audioChatModels || {},
+                transcription: {},
+            });
         } catch (err: any) {
             log(`セットアップ状態を確認できませんでした: ${err.message}`, 'error');
+            return false;
+        }
+
+        if (currentTaskNeedsOpenAi() && !status?.hasOpenaiApiKey) {
+            log('OpenAI APIキーが未設定です。設定の OpenAI APIキーへ貼って保存してください。', 'error');
+            await openConfigModal('settings');
+            setConfigStatus('OpenAI APIキーを config.json タブの OpenAI APIキー欄へ貼って保存してください。', 'error');
             return false;
         }
 
@@ -1422,7 +1569,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const audioOptions = {
             ...parseAudioModel(currentAudioModel),
-            postprocessAi: currentAudioPostprocess ? 'auto' : 'off',
+            ...(currentAudioPostprocess
+                ? audioModelState.parseAudioChatModelSelection(currentAudioChatModel)
+                : { postprocessAi: 'off' }),
         };
 
         if (!await ensureSetupBeforeExecute()) {
@@ -1455,7 +1604,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentScript === 'stitch' ? {
                     groupSize: intOrAuto(stitchGroupSizeInput.value, 2, 2, 20),
                     dpi: intOrAuto(stitchDpiInput.value, 300, 72, 600)
-                } : null
+                } : null,
+                currentOcrModel,
             );
             if (result.success) {
                 log('処理が正常に完了しました。', 'success');
@@ -1463,6 +1613,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 log(result.message || 'Gemini APIキーが未設定です。', 'error');
                 await openConfigModal('keys');
                 setConfigStatus('Gemini APIキーを作成し、config.json タブの Gemini APIキー欄へ貼って保存してください。', 'error');
+            } else if (result.setupRequired === 'openai-api-key') {
+                log(result.message || 'OpenAI APIキーが未設定です。', 'error');
+                await openConfigModal('settings');
+                setConfigStatus('OpenAI APIキーを config.json タブの OpenAI APIキー欄へ貼って保存してください。', 'error');
             } else {
                 log(`処理失敗 (コード: ${result.code})`, 'error');
             }

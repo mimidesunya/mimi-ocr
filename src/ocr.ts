@@ -30,6 +30,7 @@
  * - `--end_page <n>`      : 処理終了ページ。
  * - `--show_prompt`       : 実際に使うOCRプロンプトを表示して終了します。
  * - `--ai gemini|claude|openai` : AIプロバイダーを指定します（デフォルト: gemini）。
+ * - `--model <model>` : 選択したAIプロバイダーで使うモデルを指定します。
  * - `--mode batch|sync`   : バッチ処理または同期処理を指定します（デフォルト: sync）。
  * - `--ndlocr`            : ndlocr-lite を前処理として使います。
  * - `--ndlocr_only`       : ndlocr のみで処理します（PDF のみ対応）。
@@ -44,7 +45,7 @@ const fs = require('fs');
 const path = require('path');
 const { pdfToText, docToText, docxToText, odtToText, pptxToText, imageToText, getOcrPrompt } = require('./lib/ai_ocr');
 const { maybeAutoRenameDocument } = require('./lib/auto_rename');
-const { loadConfig, getProviderModel } = require('./lib/gemini_client');
+const { loadConfig, getProviderModel, setProviderModelOverride } = require('./lib/gemini_client');
 const {
     parsePositiveInt,
     normalizeTarget,
@@ -125,6 +126,7 @@ async function main() {
     let endPage = null;
     let showPrompt = false;
     let aiProvider = normalizeProvider(ocrConfig.provider);
+    let aiModelOverride = '';
     let processMode = normalizeMode(ocrConfig.mode);
     const defaultNdlocrMode = normalizeNdlocrMode(ocrConfig.ndlocr);
     let useNdlocr = defaultNdlocrMode === 'pre' || defaultNdlocrMode === 'only';
@@ -145,6 +147,8 @@ async function main() {
         else if (args[i] === "--end_page") endPage = parseInt(args[++i]);
         else if (args[i] === "--show_prompt") showPrompt = true;
         else if (args[i] === "--ai") aiProvider = normalizeProvider(args[++i]);
+        else if (args[i] === "--model") aiModelOverride = String(args[++i] || '').trim();
+        else if (args[i].startsWith("--model=")) aiModelOverride = args[i].slice("--model=".length).trim();
         else if (args[i] === "--mode") processMode = normalizeMode(args[++i]);
         else if (args[i] === "--ndlocr") { useNdlocr = true; ndlocrOnly = false; }
         else if (args[i] === "--ndlocr_only") { useNdlocr = true; ndlocrOnly = true; }
@@ -157,6 +161,9 @@ async function main() {
         else inputPaths.push(args[i]);
     }
 
+    if (aiModelOverride && aiModelOverride.toLowerCase() !== 'auto') {
+        setProviderModelOverride(aiProvider, 'chat', aiModelOverride);
+    }
     const aiModel = getProviderModel(aiProvider, 'chat');
     const aiLabel = `${aiProvider} / モデル: ${aiModel || '(未設定)'}`;
     const ocrAiLabel = ndlocrOnly
@@ -197,6 +204,7 @@ async function main() {
         console.log("   --start_page <n>         開始ページ");
         console.log("   --end_page <n>           終了ページ");
         console.log(`   --ai gemini|claude|openai  AI プロバイダー（現在の既定: ${aiProvider}）`);
+        console.log(`   --model <model>           OCRモデル（現在: ${aiModel || '(未設定)'}）`);
         console.log(`   --mode batch|sync        処理モード（現在の既定: ${processMode}）`);
         console.log("   --ndlocr                 ndlocr-lite を前処理に使用");
         console.log("   --ndlocr_only            ndlocr のみで処理（PDF のみ）");

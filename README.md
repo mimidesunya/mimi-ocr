@@ -93,9 +93,12 @@ npm run merge -- <Markdownファイルまたはディレクトリ>
 
 ### 音声認識
 
+GUIの実行時モデル選択は、OCRモデル、音声モデル、全体補正モデルのすべてをコンボボックスに統一しています。設定画面のモデル欄も候補を選択しつつ任意のモデルIDを入力できる編集可能コンボボックスです。実行時に「設定モデル」を選ぶと `config.json` の優先モデルを使います。
+
 ```powershell
 npm run transcribe -- .\meeting.m4a --target=houhi --provider=openai --model=gpt-4o-transcribe-diarize
 npm run transcribe -- .\meeting.wav --target=general --provider=gemini --model=gemini-3.5-transcribe
+npm run transcribe -- .\meeting.wav --provider=gemini --postprocess-ai=openai --postprocess-model=gpt-5.6-sol
 npm run transcribe -- .\meeting.wav --provider=reazon-k2 --postprocess-ai=gemini
 npm run transcribe -- .\meeting.wav --provider=reazon-k2 --postprocess-ai=off
 npm run transcribe -- .\a.m4a .\b.m4a --mode=batch --batch_size=2 --auto_rename
@@ -103,7 +106,11 @@ npm run transcribe -- .\meeting.m4a --context-text "登場人物: 田中、佐�
 npm run transcribe -- .\meeting.m4a --trim_silence
 ```
 
-`--provider=reazon-k2` は ReazonSpeech K2 / sherpa-onnx をローカルで実行し、既定では短いチャンクへ分割してから文字起こしします。`--postprocess-ai=auto|gemini|openai|off` で、ローカルASR結果をAIに渡して話者・句読点・反訳書形式へ整えるかを選べます。AI後処理を使わない場合はチャンク単位の生起こしから Markdown を作ります。
+`--provider=reazon-k2` は ReazonSpeech K2 / sherpa-onnx をローカルで実行し、既定では短いチャンクへ分割してから文字起こしします。`--postprocess-ai=auto|gemini|openai|off` で、ローカルASR結果をAIに渡して話者・句読点・反訳書形式へ整えるかを選べます。`--postprocess-model` を併用すると、音声認識モデルとは独立したChatモデルを指定できます。AI後処理を使わない場合はチャンク単位の生起こしから Markdown を作ります。
+
+AI後処理を有効にした長時間音声では、書き起こし完了後に全体の話者対応・固有名詞を解析し、補正文の生成だけを安全なサイズへ分割します。全補正分割で同じ `speaker_id` と具体名の対応を使い、元の話者ID、発言ID、ミリ秒精度の開始・終了時刻を内部で維持して再結合します。出力は開始時刻で安定ソートされ、Chat APIの応答内で発言が欠落した場合や構造化結果を読めない分割は生起こしを保持します。一方、無効なAPIキー、権限、モデル指定、通信障害などChat APIリクエスト自体が失敗した場合は、未補正結果を成功扱いで保存せずエラー終了します。一般モードの表は話者IDとミリ秒時刻を表示し、提出用の法匪モードは話者ID列を省いて開始・終了時刻を秒単位で表示します。
+
+Gemini 3.5 Transcribe の長時間音声は、認識途中の欠落を避けるため10分の採用区間へ分割し、各境界の前後5秒を文脈として重ねます。重複発言は時刻範囲で一意に採用し、Gemini応答のタイムスタンプが大きく巻き戻った場合は不完全な結果を保存せず停止します。
 
 ### 文書分割
 
@@ -171,6 +178,7 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 | `--context-file <path>` | houhi 用のサンプル Markdown を指定する |
 | `--context-text <text>` | OCR用の補助コンテキストを指定する |
 | `--ai gemini\|claude\|openai` | AI プロバイダーを選ぶ |
+| `--model <model>` | OCRに使う具体的なChatモデルを選ぶ |
 | `--mode batch\|sync` | バッチ処理か同期処理かを選ぶ |
 | `--batch_size <n>` | PDF の処理ページ数を指定する |
 | `--start_page <n>` | 開始ページを指定する |
@@ -183,8 +191,7 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 音声認識でも `--mode=batch` / `--batch_size` / `--auto_rename` を使えます。音声のバッチは複数ファイルの並列処理、自動改名は変更前のファイル名と文字起こし内容を併せて判断し、音声ファイル本体と出力Markdown名を同じ stem で作る機能です。
 `--context-text` または `--context-file` で、登場人物や固有名詞などの事前コンテキストも渡せます。
 ReazonSpeech K2 を使う場合は `--reazon-language=ja|ja-en|ja-en-mls-5k`、`--reazon-device=cpu|cuda|coreml`、`--reazon-precision=fp32|int8|int8-fp32`、`--reazon-chunk-sec=25` を指定できます。
-既存の音声認識 Markdown がある場合はAPI処理をスキップし、`--auto_rename` 指定時は既存 Markdown を使って音声ファイル本体と Markdown の改名だけを行います。
-この既存出力スキップと改名のみ実行は、OCRの既存 `_paged.md` スキップと同じ考え方です。
+既存の音声認識 Markdown があり、使用モデル・Chat API全体補正・出力要件が現在の設定と一致する場合はAPI処理をスキップします。旧版の一般モード出力にGemini Transcribeの話者ID・開始／終了時刻がない場合や、補正モデルを変更した場合は自動的に再認識し、置換前のMarkdownを `*_旧結果.md` として保存します。mimi-ocrの設定メタデータがない手編集Markdownは従来どおり保護してスキップします。
 `--trim_silence` を付けると、クライアント側で ffmpeg により無音区間をカットしてからAIへ渡します。出力時刻は元音声上の時刻へ補正され、Markdown末尾の不可視コメントに無音カット設定と削除区間の要約を残します。
 
 ## 出力ファイル

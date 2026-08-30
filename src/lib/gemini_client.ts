@@ -11,6 +11,7 @@ const RECOMMENDED_GEMINI_FALLBACK_MODELS = [
     'gemini-3.6-flash',
     'gemini-3.1-flash-lite'
 ];
+const providerModelOverrides = new Map<string, string>();
 
 const FALLBACK_APP_DEFAULTS = {
     providers: {
@@ -209,12 +210,36 @@ function loadConfig() {
     return mergeConfig(loadAppDefaults(), loadUserConfig() || {});
 }
 
+function providerModelOverrideKey(providerName, modelType = 'chat') {
+    return `${String(providerName || '').trim().toLowerCase()}:${modelType === 'transcription' ? 'transcription' : 'chat'}`;
+}
+
+function setProviderModelOverride(providerName, modelType = 'chat', model = '') {
+    const key = providerModelOverrideKey(providerName, modelType);
+    const normalizedModel = String(model || '').trim();
+    if (normalizedModel) providerModelOverrides.set(key, normalizedModel);
+    else providerModelOverrides.delete(key);
+}
+
+function getProviderModelOverride(providerName, modelType = 'chat') {
+    return providerModelOverrides.get(providerModelOverrideKey(providerName, modelType)) || '';
+}
+
 function getProviderConfig(providerName) {
     const config = loadConfig();
     if (!config || !config.providers) {
         return null;
     }
-    return config.providers[providerName] || null;
+    const provider = config.providers[providerName] || null;
+    if (!provider) return null;
+    const chatModel = getProviderModelOverride(providerName, 'chat');
+    const transcriptionModel = getProviderModelOverride(providerName, 'transcription');
+    if (!chatModel && !transcriptionModel) return provider;
+    return {
+        ...provider,
+        ...(chatModel ? { chatModel, chatModels: [chatModel] } : {}),
+        ...(transcriptionModel ? { transcriptionModel } : {}),
+    };
 }
 
 function normalizeModelPriority(value, limit = 3) {
@@ -241,6 +266,8 @@ function fillModelPriority(primaryModels, fallbackModels, limit = 3) {
 }
 
 function getGeminiChatModels() {
+    const override = getProviderModelOverride('gemini', 'chat');
+    if (override) return [override];
     const userGemini = loadUserConfig()?.providers?.gemini || {};
     const defaultsGemini = loadAppDefaults()?.providers?.gemini || {};
     const defaultModels = fillModelPriority(
@@ -275,6 +302,8 @@ function getGeminiChatModels() {
 
 function getProviderModel(providerName, modelType = 'chat') {
     const normalizedProvider = String(providerName || '').trim().toLowerCase();
+    const override = getProviderModelOverride(normalizedProvider, modelType);
+    if (override) return override;
     const modelKey = modelType === 'transcription' ? 'transcriptionModel' : 'chatModel';
     if (normalizedProvider === 'gemini' && modelKey === 'chatModel') {
         return getGeminiChatModels()[0] || '';
@@ -320,6 +349,8 @@ module.exports = {
     loadConfig,
     getProviderConfig,
     getProviderModel,
+    setProviderModelOverride,
+    getProviderModelOverride,
     normalizeModelPriority,
     getGeminiChatModels,
     getToolConfig,

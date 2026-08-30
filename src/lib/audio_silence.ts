@@ -109,12 +109,16 @@ function buildKeptSegments(duration, removedRanges) {
     return kept;
 }
 
-function mapProcessedTimeToOriginal(seconds, keptSegments) {
+function mapProcessedTimeToOriginal(seconds, keptSegments, preferNextBoundary = false) {
     const value = Number(seconds);
     if (!Number.isFinite(value) || value < 0 || !Array.isArray(keptSegments) || keptSegments.length === 0) {
         return value;
     }
-    const segment = keptSegments.find(item => value >= item.processedStart && value <= item.processedEnd)
+    const segment = keptSegments.find((item, index) => value >= item.processedStart && (
+        value < item.processedEnd
+        || (!preferNextBoundary && value === item.processedEnd)
+        || (index === keptSegments.length - 1 && value === item.processedEnd)
+    ))
         || keptSegments[keptSegments.length - 1];
     return segment.originalStart + Math.max(0, Math.min(value, segment.processedEnd) - segment.processedStart);
 }
@@ -131,25 +135,54 @@ function formatTimestamp(seconds, preferHours = false) {
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function formatTimestampMilliseconds(seconds) {
+    const milliseconds = Math.max(0, Math.round((Number(seconds) || 0) * 1000));
+    const total = Math.floor(milliseconds / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const ms = milliseconds % 1000;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
+
 function parseTimestamp(value) {
     const text = String(value || '').trim();
-    const match = text.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (!match) return null;
-    if (match[3] !== undefined) {
-        return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+    const parts = text.split(':');
+    if (parts.length !== 2 && parts.length !== 3) return null;
+    if (!parts.every((part, index) => index === parts.length - 1 ? /^\d{2}(?:\.\d{1,3})?$/.test(part) : /^\d{1,3}$/.test(part))) {
+        return null;
     }
-    return Number(match[1]) * 60 + Number(match[2]);
+    const seconds = Number(parts[parts.length - 1]);
+    const minutes = Number(parts[parts.length - 2]);
+    if (!Number.isFinite(seconds) || !Number.isFinite(minutes) || seconds >= 60 || minutes >= 60) return null;
+    return parts.length === 3
+        ? Number(parts[0]) * 3600 + minutes * 60 + seconds
+        : minutes * 60 + seconds;
 }
 
 function mapTranscriptItemsToOriginalTime(items, preprocess) {
     if (!preprocess?.silenceTrimmed || !Array.isArray(preprocess.keptSegments)) return items;
     return items.map(item => {
-        const parsed = parseTimestamp(item.time);
-        if (parsed === null) return item;
+        const preciseStart = Number(item.startMs);
+        const preciseEnd = Number(item.endMs);
+        const parsed = Number.isFinite(preciseStart) ? preciseStart / 1000 : parseTimestamp(item.time);
+        if (parsed === null || !Number.isFinite(parsed)) return item;
         const preferHours = String(item.time || '').split(':').length >= 3;
+        const mappedStart = mapProcessedTimeToOriginal(parsed, preprocess.keptSegments, true);
+        const mappedEnd = Number.isFinite(preciseEnd)
+            ? Math.max(mappedStart, mapProcessedTimeToOriginal(preciseEnd / 1000, preprocess.keptSegments))
+            : null;
+        if (Number.isFinite(preciseStart)) {
+            return {
+                ...item,
+                startMs: Math.round(mappedStart * 1000),
+                ...(mappedEnd !== null ? { endMs: Math.round(mappedEnd * 1000), endTime: formatTimestampMilliseconds(mappedEnd) } : {}),
+                time: formatTimestampMilliseconds(mappedStart),
+            };
+        }
         return {
             ...item,
-            time: formatTimestamp(mapProcessedTimeToOriginal(parsed, preprocess.keptSegments), preferHours),
+            time: formatTimestamp(mappedStart, preferHours),
         };
     });
 }
@@ -297,5 +330,6 @@ module.exports = {
     getAudioDurationSeconds,
     parseTimestamp,
     formatTimestamp,
+    formatTimestampMilliseconds,
     mapProcessedTimeToOriginal,
 };

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, screen, clipboard } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -154,6 +154,38 @@ function hasGeminiApiKey() {
     );
 }
 
+function hasOpenaiApiKey() {
+    const config = loadConfig() || {};
+    return Boolean(
+        config?.providers?.openai?.apiKey ||
+        process.env.OPENAI_API_KEY
+    );
+}
+
+function getRuntimeModelOptions() {
+    const config = loadConfig() || {};
+    const providers = config.providers || {};
+    const collectChat = (providerName) => {
+        const provider = providers[providerName] || {};
+        return Array.from(new Set([
+            ...(Array.isArray(provider.chatModels) ? provider.chatModels : []),
+            provider.chatModel,
+            getProviderModel(providerName, 'chat'),
+        ].map(value => String(value || '').trim()).filter(Boolean)));
+    };
+    return {
+        chat: {
+            gemini: collectChat('gemini'),
+            claude: collectChat('claude'),
+            openai: collectChat('openai'),
+        },
+        transcription: {
+            gemini: [getProviderModel('gemini', 'transcription')].filter(Boolean),
+            openai: [getProviderModel('openai', 'transcription')].filter(Boolean),
+        },
+    };
+}
+
 function getBundledNodeRuntime(projectRoot) {
     return getScriptNodeRuntime({ projectRoot, execPath: process.execPath, env: process.env, platform: process.platform });
 }
@@ -296,15 +328,21 @@ ipcMain.handle('open-external-url', async (_event, url) => {
     return { success: true };
 });
 
+ipcMain.handle('read-clipboard-text', () => clipboard.readText());
+
 ipcMain.handle('get-setup-status', async () => {
     ensureReleaseConfigEnv();
     const toolsRoot = getConfiguredToolsRoot();
+    const modelOptions = getRuntimeModelOptions();
     return {
         success: true,
         configPath: getWritableConfigPath(),
         toolsRoot,
         ndlocrInstalled: isNdlocrLiteInstalled(toolsRoot),
         hasGeminiApiKey: hasGeminiApiKey(),
+        hasOpenaiApiKey: hasOpenaiApiKey(),
+        modelOptions,
+        audioChatModels: modelOptions.chat,
         nodePath: getBundledNodePath(getProjectRootForGui()),
         releaseRuntime: isReleaseRuntime()
     };
@@ -369,7 +407,8 @@ ipcMain.handle('execute-script', async (event, {
     contextText,
     splitJson,
     pdfPageOptions,
-    stitchOptions
+    stitchOptions,
+    ocrModel,
 }) => {
     if (!SCRIPTS[scriptKey]) {
         throw new Error('無効なスクリプトキーです');
@@ -394,8 +433,20 @@ ipcMain.handle('execute-script', async (event, {
     const useNdlocr = selectedOcrMode === 'ndlocr_ai' || selectedOcrMode === 'ndlocr_only';
     const ndlocrOnly = selectedOcrMode === 'ndlocr_only';
     const ocrUsesAi = !isMerge && !isDeblank && !isSplit && !isPdfPages && !isStitch && (!ndlocrOnly || autoRename === true);
+    const ocrModelSelection = String(ocrModel || '').trim();
+    const ocrModelSeparator = ocrModelSelection.indexOf(':');
+    const requestedOcrModel = ocrModelSeparator >= 0
+        ? ocrModelSelection.slice(ocrModelSeparator + 1).trim()
+        : ocrModelSelection;
+    const effectiveOcrModel = !requestedOcrModel || requestedOcrModel.toLowerCase() === 'auto'
+        ? getProviderModel(aiProvider || 'gemini', 'chat')
+        : requestedOcrModel;
     const needsGeminiApiKey = (isAudio && resolvedAudioOptions?.provider === 'gemini') ||
+        (isAudio && resolvedAudioOptions?.postprocessAi === 'gemini') ||
         (ocrUsesAi && (aiProvider || 'gemini') === 'gemini');
+    const needsOpenaiApiKey = (isAudio && resolvedAudioOptions?.provider === 'openai') ||
+        (isAudio && resolvedAudioOptions?.postprocessAi === 'openai') ||
+        (ocrUsesAi && (aiProvider || 'gemini') === 'openai');
 
     if (needsGeminiApiKey && !hasGeminiApiKey()) {
         return {
@@ -403,6 +454,14 @@ ipcMain.handle('execute-script', async (event, {
             setupRequired: 'gemini-api-key',
             code: -2,
             message: 'Gemini APIキーが未設定です。設定画面で APIキーを保存してください。'
+        };
+    }
+    if (needsOpenaiApiKey && !hasOpenaiApiKey()) {
+        return {
+            success: false,
+            setupRequired: 'openai-api-key',
+            code: -2,
+            message: 'OpenAI APIキーが未設定です。設定画面で APIキーを保存してください。'
         };
     }
 
@@ -456,6 +515,9 @@ ipcMain.handle('execute-script', async (event, {
         scriptArgs.push(`--provider=${provider}`);
         scriptArgs.push(`--model=${resolvedAudioOptions.model}`);
         scriptArgs.push(`--postprocess-ai=${resolvedAudioOptions.postprocessAi || 'auto'}`);
+        if (resolvedAudioOptions.postprocessModel) {
+            scriptArgs.push(`--postprocess-model=${resolvedAudioOptions.postprocessModel}`);
+        }
         if (provider === 'reazon-k2') {
             scriptArgs.push(`--reazon-language=${resolvedAudioOptions.model || 'ja'}`);
         }
@@ -500,6 +562,9 @@ ipcMain.handle('execute-script', async (event, {
 
         // AI プロバイダー・処理モード
         scriptArgs.push('--ai', aiProvider || 'gemini');
+        if (effectiveOcrModel) {
+            scriptArgs.push('--model', effectiveOcrModel);
+        }
         scriptArgs.push('--mode', processMode || 'sync');
 
         // バッチサイズ
@@ -571,7 +636,14 @@ ipcMain.handle('execute-script', async (event, {
         const effectiveAudioModel = providerId === 'vibevoice-asr'
             ? 'microsoft/VibeVoice-ASR-BitNet'
             : resolvedAudioOptions.model || '(未設定)';
-        const postprocessLabel = ` / Chat API全体補正: ${resolvedAudioOptions.postprocessAi === 'off' ? 'Off' : 'On'}`;
+        const postprocessProvider = resolvedAudioOptions.postprocessAi === 'gemini'
+            ? 'Gemini'
+            : resolvedAudioOptions.postprocessAi === 'openai'
+                ? 'OpenAI'
+                : '自動';
+        const postprocessLabel = resolvedAudioOptions.postprocessAi === 'off'
+            ? ' / Chat API全体補正: Off'
+            : ` / Chat API全体補正: On (${postprocessProvider}${resolvedAudioOptions.postprocessModel ? ` / ${resolvedAudioOptions.postprocessModel}` : ''})`;
         const modeLabel = processMode === 'batch' ? `バッチ (サイズ ${batchSize || 4})` : '同期';
         const renameLabel = autoRename === true ? 'On' : 'Off';
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
@@ -584,7 +656,7 @@ ipcMain.handle('execute-script', async (event, {
         const renameLabel = autoRename === false ? 'Off' : 'On';
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
         const selectedProvider = aiProvider || 'gemini';
-        const effectiveModel = getProviderModel(selectedProvider, 'chat') || '(未設定)';
+        const effectiveModel = effectiveOcrModel || getProviderModel(selectedProvider, 'chat') || '(未設定)';
         const aiLabel = ndlocrOnly && autoRename !== true
             ? '使用しない'
             : `${selectedProvider} / モデル: ${effectiveModel}${ndlocrOnly ? '（自動改名のみ）' : ''}`;

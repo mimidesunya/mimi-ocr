@@ -62,6 +62,29 @@ Copy-Item config.template.json config.json
 
 - `config.json` の `providers.openai.apiKey` を設定する
 
+## 音声認識の2段階補正が OpenAI エラーで停止する
+
+症状:
+
+- `401`、`invalid_api_key`、`Incorrect API key provided` と表示される
+- `400`、`Unsupported parameter: 'temperature'` と表示される
+
+対処:
+
+- GUIの「設定」で OpenAI APIキーを貼り直し、保存してから再実行する
+- 音声認識画面の「補正AIモデル」が、利用中のAPIキーで使用できるモデルか確認する
+- `0.1.0-alpha.3` 以前で `temperature` のエラーが出る場合は、新しい版へ更新する
+
+APIエラーが発生した処理は成功扱いにせず、文字起こし結果を確定しません。エラー解消後に同じ音声を再実行してください。
+
+## APIキーの「貼り付け」ボタンでエラーになる
+
+対処:
+
+- `0.1.0-alpha.3` 以前を使用している場合は、新しい版へ更新する
+- OSのクリップボードにAPIキーをコピーしたうえで、設定画面の「貼り付け」を押す
+- 反映後は必ず設定を保存する
+
 ## `Claude API Key not found in config.json`
 
 原因:

@@ -165,7 +165,7 @@ ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffm
 | `autoInstall` | 任意 | 未準備時に venv とパッケージを自動準備するか。既定は `true` |
 | `cacheDir` | 任意 | Hugging Face キャッシュの保存先 |
 
-Reazon K2 はローカルASRなので、`--postprocess-ai=off` なら音声内容をAI APIへ送りません。`auto` / `gemini` / `openai` を選ぶと、ローカルASR結果のテキストだけをAIへ渡し、話者、句読点、反訳書用JSONへ整えます。
+Reazon K2 はローカルASRなので、`--postprocess-ai=off` なら音声内容をAI APIへ送りません。`auto` / `gemini` / `openai` を選ぶと、ローカルASR結果のテキストだけをAIへ渡し、話者、句読点、反訳書用JSONへ整えます。GUIの「補正モデル」またはCLIの `--postprocess-model` で、音声認識モデルとは別のChatモデルを選択できます。長い結果では全体の話者対応・固有名詞を先に解析し、補正文の出力だけを複数リクエストへ自動分割します。
 
 ### `tools.vibeVoiceAsr`
 

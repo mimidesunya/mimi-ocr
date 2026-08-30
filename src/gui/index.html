@@ -210,6 +210,22 @@
             accent-color: var(--accent-color);
         }
 
+        .model-select {
+            min-width: 210px;
+            max-width: 300px;
+            padding: 5px 8px;
+            font-size: 0.72rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 6px;
+            color: var(--text-color);
+            outline: none;
+            font-family: inherit;
+        }
+
+        .model-select:focus { border-color: var(--accent-color); }
+        .model-select:disabled { opacity: 0.35; cursor: not-allowed; }
+
         /* トグルグループ */
         .toggle-group {
             display: flex;
@@ -818,17 +834,25 @@
             <!-- 音声認識モデル -->
             <div class="selector-row">
                 <div class="selector-group">
-                    <span class="option-label" id="labelAudioModel">音声AI:</span>
-                    <div class="toggle-group" id="toggleAudioModel">
-                        <button class="toggle-btn active" data-audio-model="gemini:auto">Gemini</button>
-                        <button class="toggle-btn" data-audio-model="openai:auto">OpenAI</button>
-                        <button class="toggle-btn" data-audio-model="reazon-k2:ja:auto">Reazon K2+AI</button>
-                        <button class="toggle-btn" data-audio-model="vibevoice-asr:auto:off">VibeVoice CPU</button>
-                    </div>
+                    <label class="option-label" id="labelAudioModel" for="audioModelSelect">音声モデル:</label>
+                    <select class="model-select" id="audioModelSelect" title="音声認識に使うプロバイダーとモデルを選びます">
+                        <option value="gemini:auto">Gemini（設定の音声モデル）</option>
+                        <option value="openai:auto">OpenAI（設定の音声モデル）</option>
+                        <option value="reazon-k2:ja:auto">Reazon K2（日本語）</option>
+                        <option value="vibevoice-asr:auto:off">VibeVoice ASR（CPU）</option>
+                    </select>
+                </div>
+            </div>
+            <div class="selector-row">
+                <div class="selector-group">
                     <label class="audio-postprocess-option" id="audioPostprocessOption" title="書き起こし完了後、全文をChat APIへ渡して話者名・誤字・句読点を補正します">
                         <input type="checkbox" id="audioPostprocessCheckbox" checked>
                         <span>Chat APIで全体補正</span>
                     </label>
+                    <label class="option-label" id="labelAudioChatModel" for="audioChatModelSelect">補正モデル:</label>
+                    <select class="model-select" id="audioChatModelSelect" title="音声認識モデルとは独立して、全体補正に使うChat APIモデルを選びます">
+                        <option value="auto:auto">自動（音声モデルとAPI設定に従う）</option>
+                    </select>
                 </div>
             </div>
 
@@ -844,15 +868,15 @@
                 </div>
             </div>
 
-            <!-- AI プロバイダー / 処理モード -->
+            <!-- OCRモデル / 処理モード -->
             <div class="selector-row">
                 <div class="selector-group">
-                    <span class="option-label" id="labelAi">AI:</span>
-                    <div class="toggle-group" id="toggleAi">
-                        <button class="toggle-btn active" data-ai="gemini">Gemini</button>
-                        <button class="toggle-btn" data-ai="claude">Claude</button>
-                        <button class="toggle-btn" data-ai="openai">OpenAI</button>
-                    </div>
+                    <label class="option-label" id="labelAi" for="ocrModelSelect">OCRモデル:</label>
+                    <select class="model-select" id="ocrModelSelect" title="OCRに使うプロバイダーとChatモデルを選びます">
+                        <option value="gemini:auto">Gemini（設定の最優先モデル）</option>
+                        <option value="claude:auto">Claude（設定モデル）</option>
+                        <option value="openai:auto">OpenAI（設定モデル）</option>
+                    </select>
                 </div>
                 <div class="selector-group">
                     <span class="option-label" id="labelMode">Mode:</span>
@@ -999,14 +1023,14 @@
                                 <button class="context-browse-btn" type="button" data-paste-target="cfgGeminiApiKey" title="クリップボードから貼り付け">📋 貼り付け</button>
                             </div>
                             <label class="option-label" for="cfgGeminiChatModel1">OCRモデル1（最優先）</label>
-                            <input class="settings-input" id="cfgGeminiChatModel1" type="text" placeholder="gemini-3.1-flash-lite">
+                            <input class="settings-input" id="cfgGeminiChatModel1" type="text" list="geminiChatModelOptions" placeholder="gemini-3.1-flash-lite">
                             <label class="option-label" for="cfgGeminiChatModel2">OCRモデル2（失敗時）</label>
-                            <input class="settings-input" id="cfgGeminiChatModel2" type="text" placeholder="gemini-3.5-flash-lite">
+                            <input class="settings-input" id="cfgGeminiChatModel2" type="text" list="geminiChatModelOptions" placeholder="gemini-3.5-flash-lite">
                             <label class="option-label" for="cfgGeminiChatModel3">OCRモデル3（最終候補）</label>
-                            <input class="settings-input" id="cfgGeminiChatModel3" type="text" placeholder="gemini-3.6-flash">
+                            <input class="settings-input" id="cfgGeminiChatModel3" type="text" list="geminiChatModelOptions" placeholder="gemini-3.6-flash">
                             <div class="settings-note">通信エラー・空応答・形式不備では、未解決ページだけを次のモデルへ送ります。明示的な安全停止は別モデルへ自動送信しません。</div>
                             <label class="option-label" for="cfgGeminiTranscriptionModel">音声モデル</label>
-                            <input class="settings-input" id="cfgGeminiTranscriptionModel" type="text" placeholder="gemini-3.5-transcribe">
+                            <input class="settings-input" id="cfgGeminiTranscriptionModel" type="text" list="geminiTranscriptionModelOptions" placeholder="gemini-3.5-transcribe">
 
                             <div class="settings-section-title">OpenAI</div>
                             <label class="option-label" for="cfgOpenaiApiKey">APIキー</label>
@@ -1015,9 +1039,9 @@
                                 <button class="context-browse-btn" type="button" data-paste-target="cfgOpenaiApiKey" title="クリップボードから貼り付け">📋 貼り付け</button>
                             </div>
                             <label class="option-label" for="cfgOpenaiChatModel">OCRモデル</label>
-                            <input class="settings-input" id="cfgOpenaiChatModel" type="text" placeholder="gpt-4o">
+                            <input class="settings-input" id="cfgOpenaiChatModel" type="text" list="openaiChatModelOptions" placeholder="gpt-4o">
                             <label class="option-label" for="cfgOpenaiTranscriptionModel">音声モデル</label>
-                            <input class="settings-input" id="cfgOpenaiTranscriptionModel" type="text" placeholder="gpt-4o-transcribe-diarize">
+                            <input class="settings-input" id="cfgOpenaiTranscriptionModel" type="text" list="openaiTranscriptionModelOptions" placeholder="gpt-4o-transcribe-diarize">
 
                             <div class="settings-section-title">Claude</div>
                             <label class="option-label" for="cfgClaudeApiKey">APIキー</label>
@@ -1026,7 +1050,28 @@
                                 <button class="context-browse-btn" type="button" data-paste-target="cfgClaudeApiKey" title="クリップボードから貼り付け">📋 貼り付け</button>
                             </div>
                             <label class="option-label" for="cfgClaudeChatModel">OCRモデル</label>
-                            <input class="settings-input" id="cfgClaudeChatModel" type="text" placeholder="claude-opus-4-8">
+                            <input class="settings-input" id="cfgClaudeChatModel" type="text" list="claudeChatModelOptions" placeholder="claude-opus-4-8">
+
+                            <datalist id="geminiChatModelOptions">
+                                <option value="gemini-3.1-flash-lite"></option>
+                                <option value="gemini-3-flash-preview"></option>
+                                <option value="gemini-3.5-flash-lite"></option>
+                                <option value="gemini-3.6-flash"></option>
+                            </datalist>
+                            <datalist id="geminiTranscriptionModelOptions">
+                                <option value="gemini-3.5-transcribe"></option>
+                            </datalist>
+                            <datalist id="openaiChatModelOptions">
+                                <option value="gpt-5.6-sol"></option>
+                                <option value="gpt-4o"></option>
+                            </datalist>
+                            <datalist id="openaiTranscriptionModelOptions">
+                                <option value="gpt-4o-transcribe-diarize"></option>
+                            </datalist>
+                            <datalist id="claudeChatModelOptions">
+                                <option value="claude-sonnet-5"></option>
+                                <option value="claude-opus-4-8"></option>
+                            </datalist>
 
                             <details class="settings-details">
                                 <summary>詳細設定（外部ツール・上級者向け／通常は変更不要）</summary>

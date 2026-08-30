@@ -16,8 +16,9 @@
 
 - `OCR`: `AIのみ` / `ndlocr+AI` / `ndlocr-only`
 - `出力`: OCRまたは音声認識の `一般` / `法匪`
-- `音声AI`: `OpenAI` / `Gemini` / `Reazon K2+AI` / `VibeVoice CPU`。クラウド音声モデルは設定画面の音声モデル欄を使います
-- `AI`: `Gemini` / `Claude` / `OpenAI`
+- `音声モデル`: コンボボックスから `OpenAI` / `Gemini` / `Reazon K2` / `VibeVoice` の設定済みモデルを選択
+- `補正モデル`: 音声認識後の全体補正に使うGemini / OpenAI Chatモデルをコンボボックスから選択
+- `OCRモデル`: OCRに使うGemini / Claude / OpenAIモデルをコンボボックスから選択
 - `Mode`: `バッチ` / `同期`
 - `PDFテキスト`: 埋め込みテキスト優先のオンオフ
 - `バッチサイズ`: OCRではPDFを何ページずつ処理するか、音声認識では何ファイルずつ並列処理するか
@@ -62,9 +63,12 @@ npm run merge -- <Markdownファイルまたはディレクトリ>
 
 ### 音声認識
 
+GUIの実行時モデル選択は、OCRモデル、音声モデル、全体補正モデルのすべてをコンボボックスに統一しています。設定画面のモデル欄も候補を選択しつつ任意のモデルIDを入力できる編集可能コンボボックスです。実行時に「設定モデル」を選ぶと `config.json` の優先モデルを使います。以前のプロバイダーボタンの保存状態は、対応する「設定モデル」へ自動移行します。
+
 ```powershell
 npm run transcribe -- .\samples\meeting.m4a --target=houhi --provider=openai --model=gpt-4o-transcribe-diarize
 npm run transcribe -- .\samples\meeting.wav --target=general --provider=gemini --model=gemini-3.5-transcribe
+npm run transcribe -- .\samples\meeting.wav --provider=gemini --postprocess-ai=openai --postprocess-model=gpt-5.6-sol
 npm run transcribe -- .\samples\meeting.wav --provider=reazon-k2 --postprocess-ai=gemini
 npm run transcribe -- .\samples\meeting.wav --provider=reazon-k2 --postprocess-ai=off
 npm run transcribe -- .\samples\a.m4a .\samples\b.m4a --mode=batch --batch_size=2 --auto_rename
@@ -76,12 +80,11 @@ npm run transcribe -- .\samples\meeting.m4a --trim_silence
 `--provider=reazon-k2` は ReazonSpeech K2 / sherpa-onnx をローカル実行します。既定では ffmpeg で短い 16kHz mono WAV チャンクへ分割してから認識し、`--postprocess-ai=auto|gemini|openai|off` でAI後処理の有無を選びます。AI後処理ではローカルASR結果を発言単位JSONへ整え、既存の Markdown / 反訳書生成へ渡します。
 
 AIを使用する処理では、実行開始時またはAI呼び出し時にプロバイダー名と実効モデル名をコンソールへ表示します。`ndlocr-only` などAIを使わない処理では「AI: 使用しない」と表示します。
-音声認識は既存の Markdown がある場合、OCRと同様にAPI処理をスキップします。`--auto_rename` を付けた場合は、既存 Markdown の内容を使って音声ファイル本体と Markdown の改名だけを行います。
-このため、文字起こし済みの音声は再度APIへ送らず、必要な場合だけファイル名整理を後から実行できます。
+音声認識は既存の Markdown が現在のモデル・Chat API全体補正・出力要件を満たす場合、OCRと同様にAPI処理をスキップします。旧版の一般モード出力に話者IDや開始／終了時刻がない場合、または補正プロバイダー／モデルを変更した場合は再認識し、旧Markdownを `*_旧結果.md` として退避します。mimi-ocrの設定メタデータがない手編集Markdownは再認識で置き換えません。
 `--trim_silence` を付けると、ffmpeg で無音区間をカットしてからAIへ渡します。カット後の時刻は元音声上の時刻へ補正し、Markdown末尾の設定コメントに無音カット設定と削除区間の要約を記録します。
-`gemini-3.5-transcribe` は Interactions API の `verbatim` モードを使い、話者分離と単語時刻を同時に有効化します。稼働中APIでは `custom_vocabulary` と単語時刻の併用が400エラーになるため、ASRリクエストには `custom_vocabulary` を含めません。返却された `word_info` を話者の切替と文末記号で区切り、話者別・一文別の発言と各文の開始時刻を生成します。必要な単語注釈が返らない場合は、全文を「話者不明」の1発言として保存せずエラーにします。30分以内の音声はファイルサイズにかかわらず1回で処理します。認識結果は設定済みのGeminiチャットモデルで全発言を横断して確認し、本人の名乗り、他者からの呼びかけと応答、役職固有の発言、事前コンテキストを根拠に、同じ音響話者IDへ一貫した具体名または役職を付けます。根拠が不足する場合は話者番号を維持します（`--postprocess-ai=off` でこの推定を無効化できます）。30分を超える場合だけ分割し、区間ごとの話者番号を誤って同一人物扱いしないよう区間番号を付けます。MP4入力は対応MIMEのM4Aへ自動変換します。
+`gemini-3.5-transcribe` は Interactions API の `verbatim` モードを使い、話者分離と単語時刻を同時に有効化します。稼働中APIでは `custom_vocabulary` と単語時刻の併用が400エラーになるため、ASRリクエストには `custom_vocabulary` を含めません。返却された `word_info` を話者の切替と文末記号で区切り、話者別・一文別の発言を生成します。音声モデルが返した元の話者ID、発言ID、ミリ秒精度の開始・終了時刻は処理中に保持し、開始時刻で安定ソートします。一般モードの出力表には話者IDとミリ秒時刻を表示します。提出用の法匪モードでは話者ID列を表示せず、開始・終了時刻を秒単位にします。必要な単語注釈が返らない場合や、応答順のタイムスタンプが30秒を超えて巻き戻る場合は、不完全な反訳書を保存せずエラーにします。API上限は30分ですが、高密度な長時間音声で成功応答の途中が欠落する事例を避けるため、10分以内は1回、10分を超える音声は10分の採用区間と前後5秒の文脈重複を持つチャンクへ分割します。重複部分は開始時刻の所有範囲で一意に採用します。区間ごとの話者番号には一時的に区間番号を付け、後段の全体解析で同一人物だと十分判断できる場合だけ同じ具体名・役割へ対応させます。MP4入力は対応MIMEのM4Aへ自動変換します。
 
-GUIの「Chat APIで全体補正」は二段階処理の切替です。Onでは、音声モデルによる書き起こしがすべて完了した後、全文を1回のChat APIリクエストへ渡して話者名、明らかな誤字、句読点、文区切りを補正します。Offでは追加のChat API呼び出しを行わず、生の書き起こしを保存します。CLIでは `--postprocess-ai=auto` / `off` が同じ切替です。
+GUIの「Chat APIで全体補正」は二段階処理の切替です。Onでは、音声モデルによる書き起こしがすべて完了した後、全文の話者対応・固有名詞・全体概要を解析し、その共通コンテキストを使って話者名、同音異義語や固有名詞を含む明らかな誤認識、句読点、文区切りを補正します。「補正モデル」では、音声認識モデルとは独立して自動、Geminiの設定済みChatモデル、OpenAIの設定済みChatモデルを選べます。音声モデル由来の `speaker_id` と開始・終了時刻はChat APIに変更させず、同じ音声認識区間の `speaker_id` と具体名の対応は全文で固定します。長い文字起こしはChat APIの出力上限を避けるため補正段階だけを安全なサイズへ自動分割します。各発言のIDと元タイムスタンプを維持して再結合し、API応答から発言が欠落した場合や構造化結果を読めない分割は生起こしを保持します。無効なAPIキー、権限、モデル指定、通信障害などChat APIリクエスト自体が失敗した場合は、未補正結果を成功扱いで保存せずエラー終了します。長尺時は全体解析1回と複数の補正API呼び出しが行われます。Offでは追加のChat API呼び出しを行わず、生の書き起こしを保存します。CLIでは `--postprocess-ai` と `--postprocess-model` が同じ選択に対応します。
 法匪の音声認識では、事前コンテキストで具体名を指定しない場合でも、発言内容から推定できる範囲で `原告`、`被告`、`控訴人`、`被控訴人`、`裁判官`、`証人`、各代理人などの訴訟上の立場を話者ラベルに使います。
 
 ## OCR オプション一覧
@@ -97,6 +100,7 @@ GUIの「Chat APIで全体補正」は二段階処理の切替です。Onでは�
 | `--end_page <n>` | 終了ページ |
 | `--show_prompt` | OCRプロンプトを表示して終了する |
 | `--ai gemini\|claude\|openai` | AI プロバイダーを選ぶ |
+| `--model <model>` | OCRに使う具体的なChatモデルを選ぶ |
 | `--mode batch\|sync` | バッチ処理か同期処理かを選ぶ |
 | `--ndlocr` | `ndlocr-lite` を前処理として使う |
 | `--ndlocr_only` | AI を使わず `ndlocr-lite` のみで処理する |
@@ -123,6 +127,7 @@ GUIの「Chat APIで全体補正」は二段階処理の切替です。Onでは�
 | `--min_silence_sec <n>` | 無音とみなす最短秒数 |
 | `--silence_padding_sec <n>` | カット時に前後へ残す余白秒数 |
 | `--postprocess-ai auto\|gemini\|openai\|off` | Gemini 3.5 Transcribe / Reazon K2 / VibeVoice ASR の生起こしをAIで整形し、内容から具体的な話者名・役職を推定するか |
+| `--postprocess-model <model>` | 全体補正に使うChatモデル。`--postprocess-ai=gemini` または `openai` と併用する |
 | `--reazon-language ja\|ja-en\|ja-en-mls-5k` | Reazon K2 のモデル言語 |
 | `--reazon-device cpu\|cuda\|coreml` | Reazon K2 / sherpa-onnx の実行デバイス |
 | `--reazon-precision fp32\|int8\|int8-fp32` | Reazon K2 のモデル精度 |

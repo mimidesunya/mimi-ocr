@@ -1,8 +1,8 @@
-const { contextBridge, ipcRenderer, webUtils, clipboard } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-    executeScript: (scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions, stitchOptions) =>
-        ipcRenderer.invoke('execute-script', { scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions, stitchOptions }),
+    executeScript: (scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions, stitchOptions, ocrModel) =>
+        ipcRenderer.invoke('execute-script', { scriptKey, filePaths, aiProvider, processMode, ocrMode, preferPdfText, autoRename, skipFormattedRename, batchSize, ocrTarget, audioOptions, silenceTrim, contextText, splitJson, pdfPageOptions, stitchOptions, ocrModel }),
     loadConfig: () =>
         ipcRenderer.invoke('load-config'),
     saveConfig: (config) =>
@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getPathForFile: (file) =>
         webUtils.getPathForFile(file),
     readClipboardText: () =>
-        clipboard.readText(),
+        ipcRenderer.invoke('read-clipboard-text'),
     resizeMainWindow: (mode) =>
         ipcRenderer.invoke('resize-main-window', mode)
 });
