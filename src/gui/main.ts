@@ -4,6 +4,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { findConfigPath, findAppDefaultsPath, loadAppDefaults, loadUserConfig, loadConfig, getProviderModel } = require('../lib/gemini_client');
 const { getScriptNodeRuntime } = require('../lib/node_runtime');
+const { resolveAudioExecutionOptions } = require('./audio_model_state');
 
 // コンソールウィンドウの管理
 let consoleWindows = new Map();
@@ -385,14 +386,17 @@ ipcMain.handle('execute-script', async (event, {
     const isStitch = scriptKey === 'stitch';
     const isPdfPages = scriptKey === 'pdf_pages';
     const isAudio = scriptKey === 'transcribe_audio';
+    ensureReleaseConfigEnv();
+    const resolvedAudioOptions = isAudio
+        ? resolveAudioExecutionOptions(audioOptions, getProviderModel)
+        : null;
     const selectedOcrMode = ocrMode || 'ndlocr_ai';
     const useNdlocr = selectedOcrMode === 'ndlocr_ai' || selectedOcrMode === 'ndlocr_only';
     const ndlocrOnly = selectedOcrMode === 'ndlocr_only';
     const ocrUsesAi = !isMerge && !isDeblank && !isSplit && !isPdfPages && !isStitch && (!ndlocrOnly || autoRename === true);
-    const needsGeminiApiKey = (isAudio && audioOptions?.provider === 'gemini') ||
+    const needsGeminiApiKey = (isAudio && resolvedAudioOptions?.provider === 'gemini') ||
         (ocrUsesAi && (aiProvider || 'gemini') === 'gemini');
 
-    ensureReleaseConfigEnv();
     if (needsGeminiApiKey && !hasGeminiApiKey()) {
         return {
             success: false,
@@ -447,29 +451,13 @@ ipcMain.handle('execute-script', async (event, {
         }
     } else if (isAudio) {
         const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
-        const provider = audioOptions?.provider === 'reazon-k2'
-            ? 'reazon-k2'
-            : audioOptions?.provider === 'vibevoice-asr'
-                ? 'vibevoice-asr'
-                : audioOptions?.provider === 'gemini'
-                    ? 'gemini'
-                    : 'openai';
-        const defaultModel = provider === 'gemini'
-            ? getProviderModel('gemini', 'transcription') || 'gemini-3.5-flash'
-            : provider === 'reazon-k2'
-                ? 'ja'
-                : provider === 'vibevoice-asr'
-                    ? 'auto'
-                    : getProviderModel('openai', 'transcription') || 'gpt-4o-transcribe-diarize';
+        const provider = resolvedAudioOptions.provider;
         scriptArgs.push(`--target=${target}`);
         scriptArgs.push(`--provider=${provider}`);
-        scriptArgs.push(`--model=${audioOptions?.model || defaultModel}`);
+        scriptArgs.push(`--model=${resolvedAudioOptions.model}`);
+        scriptArgs.push(`--postprocess-ai=${resolvedAudioOptions.postprocessAi || 'auto'}`);
         if (provider === 'reazon-k2') {
-            scriptArgs.push(`--postprocess-ai=${audioOptions?.postprocessAi || 'auto'}`);
-            scriptArgs.push(`--reazon-language=${audioOptions?.model || 'ja'}`);
-        }
-        if (provider === 'vibevoice-asr') {
-            scriptArgs.push(`--postprocess-ai=${audioOptions?.postprocessAi || 'off'}`);
+            scriptArgs.push(`--reazon-language=${resolvedAudioOptions.model || 'ja'}`);
         }
         scriptArgs.push(`--mode=${processMode === 'batch' ? 'batch' : 'sync'}`);
         const bs = parseInt(batchSize, 10);
@@ -572,13 +560,7 @@ ipcMain.handle('execute-script', async (event, {
         consoleWin.webContents.send('console-info', `ページ指定: ${pdfPageOptions?.pages || '(未指定)'} / 種別: ${pageTypeLabel} / ${twoUpLabel}`);
     } else if (isAudio) {
         const target = ocrTarget === 'houhi' ? '法匪' : '一般';
-        const providerId = audioOptions?.provider === 'reazon-k2'
-            ? 'reazon-k2'
-            : audioOptions?.provider === 'vibevoice-asr'
-                ? 'vibevoice-asr'
-                : audioOptions?.provider === 'gemini'
-                    ? 'gemini'
-                    : 'openai';
+        const providerId = resolvedAudioOptions.provider;
         const provider = providerId === 'reazon-k2'
             ? 'Reazon K2'
             : providerId === 'vibevoice-asr'
@@ -586,14 +568,10 @@ ipcMain.handle('execute-script', async (event, {
                 : providerId === 'gemini'
                     ? 'Gemini'
                     : 'OpenAI';
-        const effectiveAudioModel = audioOptions?.model || (providerId === 'reazon-k2'
-            ? 'ja'
-            : providerId === 'vibevoice-asr'
-                ? 'microsoft/VibeVoice-ASR-BitNet'
-                : getProviderModel(providerId, 'transcription') || '(未設定)');
-        const postprocessLabel = (audioOptions?.provider === 'reazon-k2' || audioOptions?.provider === 'vibevoice-asr')
-            ? ` / AI後処理: ${audioOptions?.postprocessAi || (audioOptions?.provider === 'vibevoice-asr' ? 'off' : 'auto')}`
-            : '';
+        const effectiveAudioModel = providerId === 'vibevoice-asr'
+            ? 'microsoft/VibeVoice-ASR-BitNet'
+            : resolvedAudioOptions.model || '(未設定)';
+        const postprocessLabel = ` / Chat API全体補正: ${resolvedAudioOptions.postprocessAi === 'off' ? 'Off' : 'On'}`;
         const modeLabel = processMode === 'batch' ? `バッチ (サイズ ${batchSize || 4})` : '同期';
         const renameLabel = autoRename === true ? 'On' : 'Off';
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';

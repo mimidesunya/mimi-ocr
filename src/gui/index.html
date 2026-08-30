@@ -188,6 +188,28 @@
 
         .option-label.disabled { opacity: 0.35; }
 
+        .audio-postprocess-option {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            border-radius: 6px;
+            color: rgba(255, 255, 255, 0.78);
+            font-size: 0.72rem;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .audio-postprocess-option:hover { background: rgba(255, 255, 255, 0.05); }
+        .audio-postprocess-option.disabled { opacity: 0.35; cursor: not-allowed; }
+        .audio-postprocess-option input {
+            width: 14px;
+            height: 14px;
+            margin: 0;
+            accent-color: var(--accent-color);
+        }
+
         /* トグルグループ */
         .toggle-group {
             display: flex;
@@ -798,11 +820,15 @@
                 <div class="selector-group">
                     <span class="option-label" id="labelAudioModel">音声AI:</span>
                     <div class="toggle-group" id="toggleAudioModel">
-                        <button class="toggle-btn active" data-audio-model="gemini:gemini-3.5-flash">Gemini 3.5</button>
-                        <button class="toggle-btn" data-audio-model="openai:gpt-4o-transcribe-diarize">OpenAI diarize</button>
+                        <button class="toggle-btn active" data-audio-model="gemini:auto">Gemini</button>
+                        <button class="toggle-btn" data-audio-model="openai:auto">OpenAI</button>
                         <button class="toggle-btn" data-audio-model="reazon-k2:ja:auto">Reazon K2+AI</button>
                         <button class="toggle-btn" data-audio-model="vibevoice-asr:auto:off">VibeVoice CPU</button>
                     </div>
+                    <label class="audio-postprocess-option" id="audioPostprocessOption" title="書き起こし完了後、全文をChat APIへ渡して話者名・誤字・句読点を補正します">
+                        <input type="checkbox" id="audioPostprocessCheckbox" checked>
+                        <span>Chat APIで全体補正</span>
+                    </label>
                 </div>
             </div>
 
@@ -972,10 +998,15 @@
                                 <input class="settings-input" id="cfgGeminiApiKey" type="text" autocomplete="off" spellcheck="false" placeholder="AIza...">
                                 <button class="context-browse-btn" type="button" data-paste-target="cfgGeminiApiKey" title="クリップボードから貼り付け">📋 貼り付け</button>
                             </div>
-                            <label class="option-label" for="cfgGeminiChatModel">OCRモデル</label>
-                            <input class="settings-input" id="cfgGeminiChatModel" type="text" placeholder="gemini-2.5-flash-preview">
+                            <label class="option-label" for="cfgGeminiChatModel1">OCRモデル1（最優先）</label>
+                            <input class="settings-input" id="cfgGeminiChatModel1" type="text" placeholder="gemini-3.1-flash-lite">
+                            <label class="option-label" for="cfgGeminiChatModel2">OCRモデル2（失敗時）</label>
+                            <input class="settings-input" id="cfgGeminiChatModel2" type="text" placeholder="gemini-3.5-flash-lite">
+                            <label class="option-label" for="cfgGeminiChatModel3">OCRモデル3（最終候補）</label>
+                            <input class="settings-input" id="cfgGeminiChatModel3" type="text" placeholder="gemini-3.6-flash">
+                            <div class="settings-note">通信エラー・空応答・形式不備では、未解決ページだけを次のモデルへ送ります。明示的な安全停止は別モデルへ自動送信しません。</div>
                             <label class="option-label" for="cfgGeminiTranscriptionModel">音声モデル</label>
-                            <input class="settings-input" id="cfgGeminiTranscriptionModel" type="text" placeholder="gemini-3.5-flash">
+                            <input class="settings-input" id="cfgGeminiTranscriptionModel" type="text" placeholder="gemini-3.5-transcribe">
 
                             <div class="settings-section-title">OpenAI</div>
                             <label class="option-label" for="cfgOpenaiApiKey">APIキー</label>
@@ -1118,6 +1149,7 @@
     <script>
         window.exports = window.exports || {};
     </script>
+    <script src="audio_model_state.js"></script>
     <script src="renderer.js"></script>
 </body>
 

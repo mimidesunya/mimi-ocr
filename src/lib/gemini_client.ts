@@ -1,9 +1,24 @@
 const fs = require('fs');
 const path = require('path');
 
+const DEFAULT_GEMINI_CHAT_MODELS = [
+    'gemini-3.1-flash-lite',
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash'
+];
+const RECOMMENDED_GEMINI_FALLBACK_MODELS = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.1-flash-lite'
+];
+
 const FALLBACK_APP_DEFAULTS = {
     providers: {
-        gemini: { chatModel: 'gemini-2.5-flash-preview', transcriptionModel: 'gemini-3.5-flash' },
+        gemini: {
+            chatModel: DEFAULT_GEMINI_CHAT_MODELS[0],
+            chatModels: DEFAULT_GEMINI_CHAT_MODELS,
+            transcriptionModel: 'gemini-3.5-transcribe'
+        },
         openai: { chatModel: 'gpt-4o', transcriptionModel: 'gpt-4o-transcribe-diarize' },
         claude: { chatModel: 'claude-opus-4-8' }
     },
@@ -202,19 +217,72 @@ function getProviderConfig(providerName) {
     return config.providers[providerName] || null;
 }
 
+function normalizeModelPriority(value, limit = 3) {
+    const rawValues = Array.isArray(value)
+        ? value
+        : (typeof value === 'string' ? value.split(',') : []);
+    const models = [];
+    const seen = new Set();
+    for (const rawValue of rawValues) {
+        const model = String(rawValue || '').trim();
+        if (!model || seen.has(model)) continue;
+        seen.add(model);
+        models.push(model);
+        if (models.length >= limit) break;
+    }
+    return models;
+}
+
+function fillModelPriority(primaryModels, fallbackModels, limit = 3) {
+    return normalizeModelPriority([
+        ...normalizeModelPriority(primaryModels, limit),
+        ...normalizeModelPriority(fallbackModels, limit)
+    ], limit);
+}
+
+function getGeminiChatModels() {
+    const userGemini = loadUserConfig()?.providers?.gemini || {};
+    const defaultsGemini = loadAppDefaults()?.providers?.gemini || {};
+    const defaultModels = fillModelPriority(
+        defaultsGemini.chatModels,
+        [defaultsGemini.chatModel, ...DEFAULT_GEMINI_CHAT_MODELS]
+    );
+
+    const configuredModels = normalizeModelPriority(userGemini.chatModels);
+    if (configuredModels.length > 0) return configuredModels;
+
+    const configuredLegacyModel = String(userGemini.chatModel || '').trim();
+    if (configuredLegacyModel) {
+        return fillModelPriority(
+            [configuredLegacyModel],
+            [...RECOMMENDED_GEMINI_FALLBACK_MODELS, ...defaultModels]
+        );
+    }
+
+    const envModels = normalizeModelPriority(process.env.GEMINI_CHAT_MODELS);
+    if (envModels.length > 0) return envModels;
+
+    const envLegacyModel = String(process.env.GEMINI_CHAT_MODEL || '').trim();
+    if (envLegacyModel) {
+        return fillModelPriority(
+            [envLegacyModel],
+            [...RECOMMENDED_GEMINI_FALLBACK_MODELS, ...defaultModels]
+        );
+    }
+
+    return defaultModels;
+}
+
 function getProviderModel(providerName, modelType = 'chat') {
     const normalizedProvider = String(providerName || '').trim().toLowerCase();
     const modelKey = modelType === 'transcription' ? 'transcriptionModel' : 'chatModel';
+    if (normalizedProvider === 'gemini' && modelKey === 'chatModel') {
+        return getGeminiChatModels()[0] || '';
+    }
     const provider = getProviderConfig(normalizedProvider) || {};
     const configuredModel = String(provider[modelKey] || '').trim();
     if (configuredModel) {
         return configuredModel;
-    }
-
-    if (normalizedProvider === 'gemini' && modelKey === 'chatModel') {
-        const envModel = String(process.env.GEMINI_CHAT_MODEL || '').trim();
-        if (envModel) return envModel;
-        return '';
     }
 
     const fallbackProvider = FALLBACK_APP_DEFAULTS.providers[normalizedProvider] || {};
@@ -238,9 +306,9 @@ function getApiKey() {
 }
 
 function getGeminiChatModel() {
-    const model = getProviderModel('gemini', 'chat');
+    const model = getGeminiChatModels()[0];
     if (model) return model;
-    throw new Error('Gemini chat model is not configured. Set providers.gemini.chatModel in config.json or GEMINI_CHAT_MODEL.');
+    throw new Error('Gemini chat model is not configured. Set providers.gemini.chatModels in config.json or GEMINI_CHAT_MODELS.');
 }
 
 module.exports = {
@@ -252,6 +320,8 @@ module.exports = {
     loadConfig,
     getProviderConfig,
     getProviderModel,
+    normalizeModelPriority,
+    getGeminiChatModels,
     getToolConfig,
     getApiKey,
     getGeminiChatModel

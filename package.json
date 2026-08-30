@@ -18,7 +18,7 @@
     "stitch": "npm run build && node dist/src/stitch_pages.js",
     "pdf-pages": "npm run build && node dist/src/pdf_pages.js",
     "transcribe": "npm run build && node dist/src/transcribe_audio.js",
-    "test": "npm run build && node --test tests/auto_rename_filename.test.js tests/blank_page_detection.test.js tests/pdf_rendering_setup.test.js tests/ocr_exit_code.test.js tests/ai_ocr_payload_size.test.js tests/vibevoice_cpu.test.js",
+    "test": "npm run build && node --test tests/auto_rename_filename.test.js tests/blank_page_detection.test.js tests/pdf_rendering_setup.test.js tests/ocr_exit_code.test.js tests/ai_ocr_payload_size.test.js tests/vibevoice_cpu.test.js tests/table_drop_detection.test.js tests/audio_transcription_model.test.js",
     "build:launcher": "node scripts/build_launcher.js",
     "build:launcher:windows": "node platforms/windows/build_launcher.js",
     "build:launcher:mac": "node platforms/macos/build_launcher.js",

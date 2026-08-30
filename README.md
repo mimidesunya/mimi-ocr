@@ -46,7 +46,7 @@ npm install
 Copy-Item config.template.json config.json
 ```
 
-GUI上部の「設定」から API キーとモデル名の上書きを設定できます。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。アプリ標準値は `app.defaults.json` に入っています。
+GUI上部の「設定」から API キーとモデル名の上書きを設定できます。Gemini OCRは優先順に3モデルまで指定でき、技術的失敗時は未解決ページだけを次モデルへ送ります。「APIキー」タブには、Gemini / OpenAI / Claude のキー取得手順もあります。アプリ標準値は `app.defaults.json` に入っています。
 
 ### 3. GUI を起動する
 
@@ -95,7 +95,7 @@ npm run merge -- <Markdownファイルまたはディレクトリ>
 
 ```powershell
 npm run transcribe -- .\meeting.m4a --target=houhi --provider=openai --model=gpt-4o-transcribe-diarize
-npm run transcribe -- .\meeting.wav --target=general --provider=gemini --model=gemini-3.5-flash
+npm run transcribe -- .\meeting.wav --target=general --provider=gemini --model=gemini-3.5-transcribe
 npm run transcribe -- .\meeting.wav --provider=reazon-k2 --postprocess-ai=gemini
 npm run transcribe -- .\meeting.wav --provider=reazon-k2 --postprocess-ai=off
 npm run transcribe -- .\a.m4a .\b.m4a --mode=batch --batch_size=2 --auto_rename

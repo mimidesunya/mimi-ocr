@@ -2,7 +2,12 @@
   "providers": {
     "gemini": {
       "chatModel": "gemini-3.1-flash-lite",
-      "transcriptionModel": "gemini-3.6-flash"
+      "chatModels": [
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-3.6-flash"
+      ],
+      "transcriptionModel": "gemini-3.5-transcribe"
     },
     "openai": {
       "chatModel": "gpt-5.6-sol",

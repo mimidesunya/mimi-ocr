@@ -31,13 +31,14 @@ Copy-Item config.template.json config.json
 
 原因:
 
-- `providers.gemini.chatModel` が設定されていない
-- `GEMINI_CHAT_MODEL` も未設定
+- `providers.gemini.chatModels` と旧形式の`chatModel`が設定されていない
+- `GEMINI_CHAT_MODELS` と旧形式の`GEMINI_CHAT_MODEL`も未設定
 
 対処:
 
-- モデル名を標準値から変えたい場合は、GUIの設定または `config.json` の `providers.gemini.chatModel` で上書きする
-- もしくは環境変数 `GEMINI_CHAT_MODEL` を設定する
+- モデル名を標準値から変えたい場合は、GUIの設定で優先順3件を指定するか、`config.json`の`providers.gemini.chatModels`を配列で上書きする
+- もしくは環境変数`GEMINI_CHAT_MODELS`へカンマ区切りで指定する
+- 旧`chatModel`/`GEMINI_CHAT_MODEL`も第1順位として引き続き利用できる
 
 ## Gemini APIキーが未設定
 

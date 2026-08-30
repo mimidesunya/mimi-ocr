@@ -16,7 +16,7 @@
 
 - `OCR`: `AIのみ` / `ndlocr+AI` / `ndlocr-only`
 - `出力`: OCRまたは音声認識の `一般` / `法匪`
-- `音声AI`: `OpenAI diarize` / `Gemini 3.5` / `Reazon K2+AI`
+- `音声AI`: `OpenAI` / `Gemini` / `Reazon K2+AI` / `VibeVoice CPU`。クラウド音声モデルは設定画面の音声モデル欄を使います
 - `AI`: `Gemini` / `Claude` / `OpenAI`
 - `Mode`: `バッチ` / `同期`
 - `PDFテキスト`: 埋め込みテキスト優先のオンオフ
@@ -64,7 +64,7 @@ npm run merge -- <Markdownファイルまたはディレクトリ>
 
 ```powershell
 npm run transcribe -- .\samples\meeting.m4a --target=houhi --provider=openai --model=gpt-4o-transcribe-diarize
-npm run transcribe -- .\samples\meeting.wav --target=general --provider=gemini --model=gemini-3.5-flash
+npm run transcribe -- .\samples\meeting.wav --target=general --provider=gemini --model=gemini-3.5-transcribe
 npm run transcribe -- .\samples\meeting.wav --provider=reazon-k2 --postprocess-ai=gemini
 npm run transcribe -- .\samples\meeting.wav --provider=reazon-k2 --postprocess-ai=off
 npm run transcribe -- .\samples\a.m4a .\samples\b.m4a --mode=batch --batch_size=2 --auto_rename
@@ -79,6 +79,9 @@ AIを使用する処理では、実行開始時またはAI呼び出し時にプ�
 音声認識は既存の Markdown がある場合、OCRと同様にAPI処理をスキップします。`--auto_rename` を付けた場合は、既存 Markdown の内容を使って音声ファイル本体と Markdown の改名だけを行います。
 このため、文字起こし済みの音声は再度APIへ送らず、必要な場合だけファイル名整理を後から実行できます。
 `--trim_silence` を付けると、ffmpeg で無音区間をカットしてからAIへ渡します。カット後の時刻は元音声上の時刻へ補正し、Markdown末尾の設定コメントに無音カット設定と削除区間の要約を記録します。
+`gemini-3.5-transcribe` は Interactions API の `verbatim` モードを使い、話者分離と単語時刻を同時に有効化します。稼働中APIでは `custom_vocabulary` と単語時刻の併用が400エラーになるため、ASRリクエストには `custom_vocabulary` を含めません。返却された `word_info` を話者の切替と文末記号で区切り、話者別・一文別の発言と各文の開始時刻を生成します。必要な単語注釈が返らない場合は、全文を「話者不明」の1発言として保存せずエラーにします。30分以内の音声はファイルサイズにかかわらず1回で処理します。認識結果は設定済みのGeminiチャットモデルで全発言を横断して確認し、本人の名乗り、他者からの呼びかけと応答、役職固有の発言、事前コンテキストを根拠に、同じ音響話者IDへ一貫した具体名または役職を付けます。根拠が不足する場合は話者番号を維持します（`--postprocess-ai=off` でこの推定を無効化できます）。30分を超える場合だけ分割し、区間ごとの話者番号を誤って同一人物扱いしないよう区間番号を付けます。MP4入力は対応MIMEのM4Aへ自動変換します。
+
+GUIの「Chat APIで全体補正」は二段階処理の切替です。Onでは、音声モデルによる書き起こしがすべて完了した後、全文を1回のChat APIリクエストへ渡して話者名、明らかな誤字、句読点、文区切りを補正します。Offでは追加のChat API呼び出しを行わず、生の書き起こしを保存します。CLIでは `--postprocess-ai=auto` / `off` が同じ切替です。
 法匪の音声認識では、事前コンテキストで具体名を指定しない場合でも、発言内容から推定できる範囲で `原告`、`被告`、`控訴人`、`被控訴人`、`裁判官`、`証人`、各代理人などの訴訟上の立場を話者ラベルに使います。
 
 ## OCR オプション一覧
@@ -105,7 +108,7 @@ AIを使用する処理では、実行開始時またはAI呼び出し時にプ�
 | --- | --- |
 | `--target houhi\|general` | 反訳書形式か一般形式を切り替える |
 | `--provider openai\|gemini\|reazon-k2` | 音声認識プロバイダーを選ぶ |
-| `--model <model>` | `gpt-4o-transcribe-diarize`、`gemini-3.5-flash`、Reazonの `ja` など |
+| `--model <model>` | `gpt-4o-transcribe-diarize`、`gemini-3.5-transcribe`、Reazonの `ja` など |
 | `--mode sync\|batch` | 逐次処理か、複数ファイルのバッチ並列処理かを選ぶ |
 | `--batch_size <n>` | バッチ並列処理時に同時処理する音声ファイル数 |
 | `--auto_rename` | 内容から音声ファイル本体と出力Markdown名を自動生成する |
@@ -119,7 +122,7 @@ AIを使用する処理では、実行開始時またはAI呼び出し時にプ�
 | `--silence_threshold_db <n>` | 無音判定のしきい値 dB |
 | `--min_silence_sec <n>` | 無音とみなす最短秒数 |
 | `--silence_padding_sec <n>` | カット時に前後へ残す余白秒数 |
-| `--postprocess-ai auto\|gemini\|openai\|off` | Reazon K2 の生起こしをAIで整形するか |
+| `--postprocess-ai auto\|gemini\|openai\|off` | Gemini 3.5 Transcribe / Reazon K2 / VibeVoice ASR の生起こしをAIで整形し、内容から具体的な話者名・役職を推定するか |
 | `--reazon-language ja\|ja-en\|ja-en-mls-5k` | Reazon K2 のモデル言語 |
 | `--reazon-device cpu\|cuda\|coreml` | Reazon K2 / sherpa-onnx の実行デバイス |
 | `--reazon-precision fp32\|int8\|int8-fp32` | Reazon K2 のモデル精度 |

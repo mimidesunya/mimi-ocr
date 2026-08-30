@@ -60,8 +60,11 @@ AIサービスごとのAPIキーとモデル上書きをまとめます。APIキ
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `apiKey` | Gemini利用時に必要 | Gemini API キー。空欄なら `GEMINI_API_KEY` を使います |
-| `chatModel` | 任意 | OCR/文書処理用モデル。未指定なら `app.defaults.json` または `GEMINI_CHAT_MODEL` を使います |
+| `chatModels` | 任意 | OCR/文書処理用モデルを優先順に最大3件指定する配列。未指定なら`app.defaults.json`または`GEMINI_CHAT_MODELS`を使います |
+| `chatModel` | 任意 | 旧版互換の単一モデル指定。`chatModels`がなければ第1順位として保持し、第2・第3順位を標準候補で補います |
 | `transcriptionModel` | 任意 | Gemini 音声認識用モデル。未指定なら `app.defaults.json` を使います |
+
+標準の優先順は`gemini-3.1-flash-lite`、`gemini-3.5-flash-lite`、`gemini-3.6-flash`です。通信エラー、空応答、ページマーカー欠落などで同一モデルの再試行を使い切った場合、成功済みページを保持し、未解決ページだけを次順位モデルへ送ります。`SAFETY`など明示的な安全停止は別モデルへ自動送信しません。環境変数`GEMINI_CHAT_MODELS`はカンマ区切りで指定できます。
 
 #### `providers.claude`
 
@@ -97,6 +100,8 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 
 音声認識 CLI の既定値です。通常は `app.defaults.json` 側に置き、ユーザーごとに変えたい場合だけ `config.json` で上書きします。Gemini / OpenAI のモデル名とAPIキーは `providers.openai` / `providers.gemini` から読みます。ReazonSpeech K2 は `tools.reazonK2` のPython環境、VibeVoice ASR は `tools.vibeVoiceAsr` のCPU専用ランタイムを使います。
 
+GUIの「Gemini」「OpenAI」はプロバイダーだけを選択し、実行モデルにはそれぞれ`providers.gemini.transcriptionModel`、`providers.openai.transcriptionModel`を使います。設定画面で音声モデルを保存すると、次の実行から反映されます。
+
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `provider` | 任意 | `gemini`、`openai`、`reazon-k2`、`vibevoice-asr`。既定は `gemini` |
@@ -106,7 +111,7 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 | `batchSize` | 任意 | `batch` 時に同時処理する音声ファイル数 |
 | `autoRename` | 任意 | 変更前のファイル名と文字起こし内容から音声ファイル本体と出力Markdown名を自動生成するか |
 | `skipFormattedRename` | 任意 | 既に自動改名形式の音声ファイルは再判定せずスキップするか。既定は `false` |
-| `postprocessAi` | 任意 | Reazon K2 / VibeVoice ASR の生起こしをAIで整えるか。`auto` / `gemini` / `openai` / `off` |
+| `postprocessAi` | 任意 | Gemini 3.5 Transcribe / Reazon K2 / VibeVoice ASR の生起こしをAIで整え、内容から具体的な話者名・役職を推定するか。`auto` / `gemini` / `openai` / `off` |
 | `reazonLanguage` | 任意 | Reazon K2 の言語。`ja` / `ja-en` / `ja-en-mls-5k` |
 | `reazonDevice` | 任意 | Reazon K2 の実行デバイス。`cpu` / `cuda` / `coreml` |
 | `reazonPrecision` | 任意 | Reazon K2 の精度。`fp32` / `int8` / `int8-fp32` |
@@ -206,7 +211,7 @@ Microsoftが公開しているBitNet版の評価表には英語・フランス�
 
 OCR 直後の Markdown 末尾には、`<!-- mimi-ocr-settings ... -->` 形式で実行設定が記録されます。合成後の設定からは主に次の値だけを参照します。
 
-- 使用AIプロバイダーのモデル名（例: `providers.gemini.chatModel`, `providers.claude.chatModel`, `providers.openai.chatModel`）
+- 使用AIプロバイダーのモデル名とGeminiの優先順（例: `providers.gemini.chatModels`, `providers.claude.chatModel`, `providers.openai.chatModel`）
 - `tools.ndlocrLite.parallelJobs`
 - `tools.ndlocrLite.pageChunkSize`
 - `tools.ndlocrLite.imageDpi`

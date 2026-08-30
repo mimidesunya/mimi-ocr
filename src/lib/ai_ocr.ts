@@ -11,7 +11,7 @@ const os = require('os');
 const { loadPdfjsLib } = require('./pdfjs_loader');
 const { extractPdfPagesToImages, detectBlankPdfPages, buildDocumentParameters, cleanupPdfResources } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
-const { getGeminiChatModel, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
+const { getGeminiChatModel, getGeminiChatModels, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
 
 function getAiModelLabel(aiProvider) {
     const model = getProviderModel(aiProvider, 'chat');
@@ -48,9 +48,10 @@ ${numPages} pages of a Japanese document.
      - {EndStatus}: "(Continuation)" if the paragraph is cut off mid-sentence and continues to the next page without an explicit line break, else empty.
 4. **Transcription Rules**:
    - **No Indentation**: Standard Markdown paragraphs.
-   - **Numbers**: Convert ALL full-width numbers to half-width (e.g., "１" -> "1"). 
+   - **Numbers**: Convert ALL full-width numbers to half-width (e.g., "１" -> "1").
    - **Corrections**: Fix obvious OCR errors (0 vs O). Keep original typos with \`(-- as is)\`.
-   - **Visuals**: If there are photos or diagrams, provide an explanation for them in Japanese formatted as \`(--! Explanation)\`.
+   - **Tables**: ALWAYS transcribe a ruled or statistical table as a Markdown table. NEVER replace a table with a description, a summary, or a note such as \`(--! A table showing ...)\`, and never drop rows or columns because the table is long or dense. Output every row, including header rows, subtotal/total rows (小計/合計) and empty cells (leave such a cell empty). Transcribe the numerals exactly as printed. When a vertically written table puts one record in one column, transpose it so that one Markdown row is one record, and read the records from right to left.
+   - **Visuals**: If there are photos or diagrams, provide an explanation for them in Japanese formatted as \`(--! Explanation)\`. This applies to photographs, illustrations and figures only; never use it in place of a table.
    - **Exclusions**: Omit printed page numbers from body.
      - **Redactions**: Replace blacked-out or redacted parts with "■".
      - **Margins**:
@@ -197,8 +198,8 @@ function estimateRequestsPayloadBytes(requests) {
     return total;
 }
 
-async function runBatches(requests, metadata, batchProcessor, progressState, persistenceFile, processMode = 'batch') {
-    const modelId = getGeminiChatModel();
+async function runBatches(requests, metadata, batchProcessor, progressState, persistenceFile, processMode = 'batch', modelId = null) {
+    modelId = modelId || getGeminiChatModel();
     if (processMode === 'sync') {
         console.log(`[同期] ${requests.length} 件のリクエストを同期モードで処理中...`);
         return await batchProcessor.runSync(requests, modelId, progressState);
@@ -247,7 +248,6 @@ async function runOpenAIBatch(requests, progressState, processMode = 'batch', pe
 
 // 単一または少数のリクエスト用ヘルパー（Word文書用）
 async function runSingleBatch(requests, batchProcessor, progressState, displayName, persistenceFile, aiProvider = 'gemini', processMode = 'batch') {
-    const modelId = getGeminiChatModel();
     if (aiProvider === 'claude') {
         return await runClaudeBatch(requests, progressState, processMode);
     }
@@ -255,28 +255,103 @@ async function runSingleBatch(requests, batchProcessor, progressState, displayNa
         return await runOpenAIBatch(requests, progressState, processMode, persistenceFile);
     }
     
-    if (processMode === 'sync') {
-        console.log(`[同期] リクエストを同期モードで処理中...`);
-        return await batchProcessor.runSync(requests, modelId, progressState);
+    const modelPriority = getGeminiChatModels();
+    let latestResults = [];
+    for (let modelIndex = 0; modelIndex < modelPriority.length; modelIndex++) {
+        const modelId = modelPriority[modelIndex];
+        if (modelIndex > 0) {
+            console.warn(`[モデル切替] Gemini未解決要求を ${modelId} で再試行します。`);
+        }
+        const modelProgress = modelIndex === 0 ? progressState : null;
+        const modelPersistenceFile = modelIndex === 0 || !persistenceFile
+            ? persistenceFile
+            : `${persistenceFile}.model-${modelIndex + 1}`;
+
+        try {
+            if (processMode === 'sync') {
+                console.log(`[同期] リクエストを同期モードで処理中...`);
+                latestResults = await batchProcessor.runSync(requests, modelId, modelProgress);
+            } else {
+                const INLINE_THRESHOLD = 15 * 1024 * 1024; // 15MB
+                const payloadEstimate = estimateRequestsPayloadBytes(requests);
+                const sizeMB = (payloadEstimate / 1024 / 1024).toFixed(2);
+                console.log(`[バッチ] リクエスト送信中... (見積もりサイズ: ${sizeMB} MB)`);
+                if (payloadEstimate < INLINE_THRESHOLD) {
+                    console.log(`[バッチ] インラインバッチを使用 (高速モード)`);
+                    latestResults = await batchProcessor.runInlineBatch(requests, modelId, modelProgress, displayName);
+                } else {
+                    console.log(`[バッチ] ファイルバッチを使用 (大容量モード)`);
+                    latestResults = await batchProcessor.runFileBatch(requests, modelId, modelProgress, displayName, modelPersistenceFile);
+                }
+            }
+        } catch (error) {
+            const message = normalizeErrorDetail(error?.message || error);
+            latestResults = requests.map(() => ({ response: null, error: { message } }));
+        }
+
+        const shouldFallback = latestResults.some(result => (
+            (Boolean(result?.error) || !hasUsableAiResponseText(result?.response)) &&
+            !isExplicitSafetyStop(result?.response)
+        ));
+        if (!shouldFallback || modelIndex === modelPriority.length - 1) {
+            return latestResults;
+        }
     }
-    
-    const INLINE_THRESHOLD = 15 * 1024 * 1024; // 15MB
-    
-    const payloadEstimate = estimateRequestsPayloadBytes(requests);
-    const sizeMB = (payloadEstimate / 1024 / 1024).toFixed(2);
-    
-    console.log(`[バッチ] リクエスト送信中... (見積もりサイズ: ${sizeMB} MB)`);
-    
-    if (payloadEstimate < INLINE_THRESHOLD) {
-        console.log(`[バッチ] インラインバッチを使用 (高速モード)`);
-        return await batchProcessor.runInlineBatch(requests, modelId, progressState, displayName);
-    } else {
-        console.log(`[バッチ] ファイルバッチを使用 (大容量モード)`);
-        return await batchProcessor.runFileBatch(requests, modelId, progressState, displayName, persistenceFile);
+    return latestResults;
+}
+
+function stripOcrSettingsComments(content) {
+    return String(content || '').replace(/<!--\s*mimi-ocr-settings[\s\S]*?-->\s*/g, '');
+}
+
+async function runGeminiRequestsWithRecoveryTransport(
+    requests,
+    metadata,
+    batchProcessor,
+    progressState,
+    persistenceFile,
+    processMode = 'batch'
+) {
+    const metadataModel = (metadata || [])
+        .map(item => String(item?.modelId || '').trim())
+        .find(Boolean);
+    const defaultModel = metadataModel || getGeminiChatModel();
+    const groups = new Map();
+    for (let i = 0; i < requests.length; i++) {
+        const forceSync = processMode === 'batch' && metadata[i]?.forceSync;
+        const modelId = String(metadata[i]?.modelId || defaultModel).trim() || defaultModel;
+        const key = `${forceSync ? 'forced-sync' : processMode}\u0000${modelId}`;
+        if (!groups.has(key)) groups.set(key, { forceSync, modelId, positions: [] });
+        groups.get(key).positions.push(i);
     }
+
+    const results = new Array(requests.length);
+    for (const group of groups.values()) {
+        const groupRequests = group.positions.map(index => requests[index]);
+        let groupResults;
+        if (group.forceSync) {
+            console.warn(`[再試行] Batch APIで未解決だった ${group.positions.length} 件を同期inlineへ切替えます。`);
+            groupResults = await batchProcessor.runSync(groupRequests, group.modelId, null, 1);
+        } else {
+            groupResults = await runBatches(
+                groupRequests,
+                group.positions.map(index => metadata[index]),
+                batchProcessor,
+                progressState,
+                persistenceFile,
+                processMode,
+                group.modelId
+            );
+        }
+        group.positions.forEach((position, index) => {
+            results[position] = groupResults[index];
+        });
+    }
+    return results;
 }
 
 function extractPagesFromMarkdown(content) {
+    content = stripOcrSettingsComments(content);
     const pageMap = new Map();
     const regex = /### -- Begin Page (\d+)/g;
     let match;
@@ -295,6 +370,74 @@ function extractPagesFromMarkdown(content) {
         }
     }
     return pageMap;
+}
+
+function summarizeAiResponse(response) {
+    if (!response || typeof response !== 'object') return 'response=missing';
+
+    const candidates = Array.isArray(response.candidates) ? response.candidates : [];
+    const finishReasons = Array.from(new Set(
+        candidates
+            .map(candidate => String(candidate?.finishReason || '').trim())
+            .filter(Boolean)
+    ));
+    const textChars = candidates.reduce((total, candidate) => {
+        const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+        return total + parts.reduce((partTotal, part) => (
+            partTotal + (typeof part?.text === 'string' ? part.text.length : 0)
+        ), 0);
+    }, 0);
+    const promptBlockReason = String(response?.promptFeedback?.blockReason || '').trim();
+    const safetyRatings = [];
+    for (const rating of response?.promptFeedback?.safetyRatings || []) {
+        const category = String(rating?.category || '').trim();
+        const probability = String(rating?.probability || '').trim();
+        if (category || probability) safetyRatings.push(`${category || 'UNKNOWN'}:${probability || 'UNKNOWN'}`);
+    }
+    for (const candidate of candidates) {
+        for (const rating of candidate?.safetyRatings || []) {
+            const category = String(rating?.category || '').trim();
+            const probability = String(rating?.probability || '').trim();
+            if (category || probability) safetyRatings.push(`${category || 'UNKNOWN'}:${probability || 'UNKNOWN'}`);
+        }
+    }
+
+    return [
+        `candidateCount=${candidates.length}`,
+        `textChars=${textChars}`,
+        `finishReasons=${finishReasons.length > 0 ? finishReasons.join(',') : 'none'}`,
+        `promptBlockReason=${promptBlockReason || 'none'}`,
+        `safetyRatings=${safetyRatings.length > 0 ? Array.from(new Set(safetyRatings)).join(',') : 'none'}`
+    ].join('; ');
+}
+
+function hasUsableAiResponseText(response) {
+    const candidates = Array.isArray(response?.candidates) ? response.candidates : [];
+    return candidates.some(candidate => (
+        (Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [])
+            .some(part => typeof part?.text === 'string' && part.text.trim().length > 0)
+    ));
+}
+
+function isExplicitSafetyStop(response) {
+    const blockReason = String(response?.promptFeedback?.blockReason || '').trim().toUpperCase();
+    if (blockReason && blockReason !== 'BLOCK_REASON_UNSPECIFIED') return true;
+
+    const safetyFinishReasons = new Set([
+        'SAFETY',
+        'BLOCKLIST',
+        'PROHIBITED_CONTENT',
+        'SPII'
+    ]);
+    return (Array.isArray(response?.candidates) ? response.candidates : [])
+        .some(candidate => safetyFinishReasons.has(String(candidate?.finishReason || '').trim().toUpperCase()));
+}
+
+function selectNextGeminiModel(modelPriority, currentModelIndex, response = null) {
+    if (isExplicitSafetyStop(response)) return null;
+    const nextModelIndex = Number(currentModelIndex || 0) + 1;
+    const modelId = Array.isArray(modelPriority) ? modelPriority[nextModelIndex] : null;
+    return modelId ? { modelIndex: nextModelIndex, modelId } : null;
 }
 
 function toAbsoluteBatchPageMap(rawText, metaPages) {
@@ -385,6 +528,120 @@ function findEmptyOcrPages(pageMap, pages) {
         }
     }
     return emptyPages;
+}
+
+/**
+ * 統計表を書き起こさず「表がある」という説明だけを返した応答を検出する。
+ *
+ * Gemini は罫線の多い統計表で、表本体の代わりに
+ * `(--! A table showing statistical data for various villages/towns.)` のような
+ * 注記だけを出すことがある。周囲の本文は残るため空ページ判定では拾えず、
+ * 表だけが黙って失われる。
+ */
+const TABLE_NOTE_PATTERN = /\(--!\s*([^)]*)\)/g;
+const TABLE_WORD_PATTERN = /\btables?\b|\btabular\b|統計表|一覧表|数値表|表組|表形式|の表|表が(?:示|載|掲)|表を(?:示|掲載|記載)/i;
+
+function hasMarkdownTableRow(text) {
+    return /^[ \t]*\|.*\|[ \t]*$/m.test(String(text || ''));
+}
+
+function describesTableWithoutTranscribing(block) {
+    const text = stripOcrPageMarkers(block);
+    if (!text) return false;
+    if (hasMarkdownTableRow(text)) return false;
+
+    TABLE_NOTE_PATTERN.lastIndex = 0;
+    let match;
+    while ((match = TABLE_NOTE_PATTERN.exec(text)) !== null) {
+        if (TABLE_WORD_PATTERN.test(match[1] || '')) return true;
+    }
+    return false;
+}
+
+function findDroppedTablePages(pageMap, pages) {
+    const droppedPages = [];
+    for (const pageNum of pages || []) {
+        if (describesTableWithoutTranscribing(pageMap.get(pageNum))) {
+            droppedPages.push(pageNum);
+        }
+    }
+    return droppedPages;
+}
+
+/**
+ * Gemini が複数ページ中の一部だけを返した場合でも、取得済み本文を失わないように
+ * 有効ページを直ちに pageMap へ確定し、空本文ページだけを未解決として返す。
+ *
+ * 完全な空応答は、単ページリクエストの場合だけ「空本文の確認」として数える。
+ * 複数ページの完全な空応答では本文ページまで白紙扱いする危険があるため数えない。
+ */
+function applyOcrBatchTextResult(rawText, metaPages, pageMap, emptyResponseCounts) {
+    const pages = Array.isArray(metaPages) ? metaPages : [];
+    const text = typeof rawText === 'string' ? rawText : '';
+    const normalized = toAbsoluteBatchPageMap(text, pages);
+    const usefulPages = [];
+    let emptyPages = [];
+
+    if (normalized.ok) {
+        emptyPages = findEmptyOcrPages(normalized.pageMap, pages)
+            .filter(pageNum => !pageMap.has(pageNum));
+
+        for (const pageNum of pages) {
+            const content = normalized.pageMap.get(pageNum);
+            if (!hasUsefulOcrPageText(content)) continue;
+            pageMap.set(pageNum, content);
+            usefulPages.push(pageNum);
+        }
+    } else if (pages.length === 1 && text.trim().length === 0 && !pageMap.has(pages[0])) {
+        emptyPages = [pages[0]];
+    }
+
+    for (const pageNum of emptyPages) {
+        emptyResponseCounts.set(pageNum, (emptyResponseCounts.get(pageNum) || 0) + 1);
+    }
+
+    return {
+        normalized,
+        usefulPages,
+        emptyPages,
+        unresolvedPages: pages.filter(pageNum => !pageMap.has(pageNum))
+    };
+}
+
+/**
+ * 通常の白紙判定を通らなかったスキャナ汚れ付きページ用の二次判定。
+ * Gemini が同じページを複数回空本文として返した場合に限って呼び出す。
+ */
+async function confirmRepeatedEmptyPdfPages(pdfPath, pageNumbers) {
+    if (!Array.isArray(pageNumbers) || pageNumbers.length === 0) return [];
+    return await detectBlankPdfPages(pdfPath, pageNumbers, 72, {
+        minInkRatio: 0.005,
+        minInkPixels: 512
+    });
+}
+
+/**
+ * バッチ要求と、そこから分離した単ページ要求にそれぞれ独立した再試行枠を与える。
+ * 親要求が上限へ達した後に追加した子要求も、常に maxAttempts 回まで試せる。
+ */
+function createIndependentRetryBudget(maxAttempts = 3) {
+    const normalizedMaxAttempts = Math.max(1, Math.floor(Number(maxAttempts) || 1));
+    const attempts = new Map();
+
+    return {
+        begin(requestIndex) {
+            const next = (attempts.get(requestIndex) || 0) + 1;
+            attempts.set(requestIndex, next);
+            return next;
+        },
+        canRetry(requestIndex) {
+            return (attempts.get(requestIndex) || 0) < normalizedMaxAttempts;
+        },
+        count(requestIndex) {
+            return attempts.get(requestIndex) || 0;
+        },
+        maxAttempts: normalizedMaxAttempts
+    };
 }
 
 function normalizeErrorDetail(detail) {
@@ -539,7 +796,8 @@ function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}
             contextFile: normalizeMetadataPath(runtimeOptions.contextFilePath),
             ai: {
                 provider: aiProvider,
-                model: providerConfig.chatModel || providerConfig.model
+                model: getProviderModel(aiProvider, 'chat') || providerConfig.model,
+                modelPriority: aiProvider === 'gemini' ? getGeminiChatModels() : null
             },
             processMode: runtimeOptions.processMode || 'batch',
             batchSize: runtimeOptions.batchSize ?? null,
@@ -813,6 +1071,97 @@ async function extractEmbeddedTextFromPdfPages(pdfPath, pageNumbers) {
     return result;
 }
 
+function normalizeTextForSimilarity(text) {
+    return stripOcrPageMarkers(String(text || ''))
+        .replace(/<!--\s*mimi-ocr-fallback:[\s\S]*?-->/g, '')
+        .normalize('NFKC')
+        .replace(/[\s\p{P}\p{S}]/gu, '');
+}
+
+function compareTextSimilarity(left, right) {
+    const a = normalizeTextForSimilarity(left);
+    const b = normalizeTextForSimilarity(right);
+    const maxLength = Math.max(a.length, b.length);
+    const lengthRatio = maxLength > 0 ? Math.min(a.length, b.length) / maxLength : 0;
+    const toBigrams = (value) => {
+        const grams = new Set();
+        for (let i = 0; i < value.length - 1; i++) grams.add(value.slice(i, i + 2));
+        return grams;
+    };
+    const aBigrams = toBigrams(a);
+    const bBigrams = toBigrams(b);
+    const union = new Set([...aBigrams, ...bBigrams]);
+    let common = 0;
+    for (const gram of aBigrams) {
+        if (bBigrams.has(gram)) common++;
+    }
+    const bigramJaccard = union.size > 0 ? common / union.size : 0;
+    return { leftLength: a.length, rightLength: b.length, lengthRatio, bigramJaccard };
+}
+
+function buildEmbeddedTextFallbackPageContent(pageNum, embeddedText, validation) {
+    const jaccard = Number(validation?.bigramJaccard || 0).toFixed(3);
+    const lengthRatio = Number(validation?.lengthRatio || 0).toFixed(3);
+    return [
+        `### -- Begin Page ${pageNum} --`,
+        '',
+        `<!-- mimi-ocr-fallback: embedded-pdf-text; neighborJaccard=${jaccard}; neighborLengthRatio=${lengthRatio} -->`,
+        '',
+        String(embeddedText || '').trim(),
+        '',
+        '### -- End --'
+    ].join('\n');
+}
+
+async function recoverPagesFromTrustedEmbeddedText(pdfPath, pageNumbers, pageMap, totalPages) {
+    const unresolvedPages: number[] = Array.from(new Set<number>(
+        (pageNumbers || []).map(pageNum => Number(pageNum))
+    ))
+        .filter(pageNum => Number.isInteger(pageNum) && pageNum >= 1 && pageNum <= totalPages);
+    if (unresolvedPages.length === 0) return [];
+
+    // Fix the trust anchors before adding fallbacks so one recovered page cannot
+    // validate the next unresolved page and cascade through a damaged range.
+    const trustedNeighborPages = new Set(
+        Array.from(pageMap.entries())
+            .filter(([, content]) => !String(content || '').includes('mimi-ocr-fallback: embedded-pdf-text'))
+            .map(([pageNum]) => Number(pageNum))
+    );
+
+    const pagesToRead = new Set<number>(unresolvedPages);
+    for (const pageNum of unresolvedPages) {
+        if (pageNum > 1) pagesToRead.add(pageNum - 1);
+        if (pageNum < totalPages) pagesToRead.add(pageNum + 1);
+    }
+    const embeddedText = await extractEmbeddedTextFromPdfPages(pdfPath, Array.from(pagesToRead));
+    const recovered = [];
+
+    for (const pageNum of unresolvedPages) {
+        const candidate = embeddedText.get(pageNum);
+        if (normalizeTextForSimilarity(candidate).length < 80) continue;
+
+        const neighborMetrics = [];
+        for (const neighborPage of [pageNum - 1, pageNum + 1]) {
+            if (!trustedNeighborPages.has(neighborPage) || !embeddedText.has(neighborPage)) continue;
+            neighborMetrics.push(compareTextSimilarity(
+                embeddedText.get(neighborPage),
+                pageMap.get(neighborPage)
+            ));
+        }
+        if (neighborMetrics.length === 0) continue;
+        if (neighborMetrics.some(metric => metric.bigramJaccard < 0.75 || metric.lengthRatio < 0.75)) continue;
+
+        const validation = {
+            bigramJaccard: neighborMetrics.reduce((sum, metric) => sum + metric.bigramJaccard, 0) / neighborMetrics.length,
+            lengthRatio: neighborMetrics.reduce((sum, metric) => sum + metric.lengthRatio, 0) / neighborMetrics.length,
+            neighborCount: neighborMetrics.length
+        };
+        pageMap.set(pageNum, buildEmbeddedTextFallbackPageContent(pageNum, candidate, validation));
+        recovered.push({ pageNum, ...validation });
+    }
+    return recovered;
+}
+
 async function getPdfPageCount(pdfPath) {
     const pdfjsLib = await loadPdfjsLib();
     const loadingTask = pdfjsLib.getDocument(buildDocumentParameters(pdfPath));
@@ -859,6 +1208,15 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     ensureWritableOutputPath(errorPath, 'OCR中間結果ファイル');
 
     console.log(`[情報] AI: ${ndlocrOnly ? '使用しない' : getAiModelLabel(aiProvider)} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${useNdlocr ? (ndlocrOnly ? 'Only' : 'Pre-OCR') : 'Off'} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
+    const geminiModelPriority = !ndlocrOnly && aiProvider === 'gemini'
+        ? getGeminiChatModels()
+        : [];
+    if (geminiModelPriority.length > 1) {
+        console.log(`[情報] Geminiモデル優先順: ${geminiModelPriority.join(' -> ')}`);
+    }
+    const primaryGeminiRequestMeta = geminiModelPriority.length > 0
+        ? { modelIndex: 0, modelId: geminiModelPriority[0] }
+        : {};
     const totalPages = await getPdfPageCount(pdfPath);
     let srcDoc = null;
     let pdfBuffer = null;
@@ -890,10 +1248,12 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             pageErrorMap.delete(p);
         }
     };
+    let resumedFromErrorFile = false;
     if (!ndlocrOnly && fs.existsSync(errorPath)) {
         const existingContent = fs.readFileSync(errorPath, 'utf-8');
         pageMap = extractPagesFromMarkdown(existingContent);
         if (pageMap.size > 0) {
+            resumedFromErrorFile = true;
             console.log(`[情報] ${errorPath} から再開します (${pageMap.size} ページ完了済み)`);
         }
     }
@@ -927,6 +1287,33 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     } catch (e) {
         // 白紙判定自体の失敗でOCR全体を止めず、安全側として全ページをOCRへ回す。
         console.warn(`[空白検出] 判定に失敗したため全ページをOCR処理します: ${e.message}`);
+    }
+
+    // A resume file already contains AI-confirmed neighboring pages. If those
+    // pages prove that the PDF text layer is faithful, fill isolated failures
+    // locally before paying for and repeating the same provider request.
+    if (resumedFromErrorFile && pageIndices.length > 0) {
+        try {
+            const recovered = await recoverPagesFromTrustedEmbeddedText(
+                pdfPath,
+                pageIndices,
+                pageMap,
+                totalPages
+            );
+            if (recovered.length > 0) {
+                const recoveredPages = new Set(recovered.map(item => item.pageNum));
+                pageIndices = pageIndices.filter(pageNum => !recoveredPages.has(pageNum));
+                for (const item of recovered) {
+                    pageErrorMap.delete(item.pageNum);
+                    console.warn(
+                        `[PDFテキスト救済] 再開ページ ${item.pageNum} をAPI再送前にローカル復旧しました ` +
+                        `(近接${item.neighborCount}頁、Jaccard=${item.bigramJaccard.toFixed(3)}、長さ比=${item.lengthRatio.toFixed(3)})。`
+                    );
+                }
+            }
+        } catch (e) {
+            console.warn(`[PDFテキスト救済] 再開時の事前判定に失敗したため通常OCRへ進みます: ${e.message}`);
+        }
     }
 
     let embeddedTextMap = new Map();
@@ -1087,7 +1474,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
             if (hasTextForAllPages) {
                 requests.push(createRawTextRequest(batch, pageTextMap, contextInstruction));
-                batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch });
+                batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch, ...primaryGeminiRequestMeta });
                 continue;
             }
 
@@ -1097,7 +1484,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                     fallbackTextMap.set(pNum, pageTextMap.get(pNum) || "[未検出]");
                 }
                 requests.push(createRawTextRequest(batch, fallbackTextMap, contextInstruction));
-                batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch });
+                batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch, ...primaryGeminiRequestMeta });
                 continue;
             }
 
@@ -1119,7 +1506,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 if (!srcDoc) {
                     console.log(`[情報] ページ ${batch.join(',')} を画像化してOCRします`);
                     requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction));
-                    batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch });
+                    batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch, ...primaryGeminiRequestMeta });
                     continue;
                 }
 
@@ -1133,7 +1520,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 requests.push(createOcrRequest(Buffer.from(batchPdfBytes), batch.length, contextInstruction));
             }
             
-            batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch });
+            batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch, ...primaryGeminiRequestMeta });
         }
 
         // PDFDocument は元PDF全体を保持するため、API送信前に参照を解放する。
@@ -1147,8 +1534,16 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             ? new GeminiBatchProcessor()
             : null;
         let pendingIndices = requests.map((_, i) => i);
-        let retryCount = 0;
         const MAX_RETRIES = 3;
+        const MIN_EMPTY_CONFIRMATIONS = 2;
+        const retryBudget = createIndependentRetryBudget(MAX_RETRIES);
+        const emptyResponseCounts = new Map();
+        const splitBatchIndices = new Set();
+        // 表を書き起こさず説明だけを返したページの再試行管理。
+        // 直前の本文は捨てずに保持し、再試行が実らなければ元の本文へ戻す。
+        const MAX_TABLE_RETRIES = 2;
+        const droppedTableAttempts = new Map();
+        const droppedTableFallback = new Map();
 
         const progressState = {
             completed: 0,
@@ -1185,18 +1580,105 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             console.log(`[情報] 中間結果を ${errorPath} に保存しました (${pageMap.size} ページ完了)`);
         };
 
-        while (pendingIndices.length > 0) {
-            if (retryCount >= MAX_RETRIES) {
-                console.error(`[エラー] リトライ上限に達しました。${pendingIndices.length} 件のバッチが失敗しました。`);
-                break;
-            }
-            
-            if (retryCount > 0) {
-                console.log(`[情報] ${pendingIndices.length} 件のバッチをリトライ中 (試行 ${retryCount}/${MAX_RETRIES})...`);
+        const enqueueSinglePageRetries = async (originalIndex, meta, unresolvedPages, nextPendingIndices) => {
+            const canCrossFromBatchToSync = (
+                processMode === 'batch' &&
+                meta.pages.length === 1 &&
+                !meta.forceSync
+            );
+            if (
+                aiProvider !== 'gemini' ||
+                (meta.pages.length <= 1 && !canCrossFromBatchToSync) ||
+                unresolvedPages.length === 0 ||
+                splitBatchIndices.has(originalIndex)
+            ) {
+                return false;
             }
 
+            const recoveryLabel = canCrossFromBatchToSync
+                ? '同期inline用の単ページ要求へ切替えます'
+                : '独立した単ページ要求へ分割します';
+            console.warn(`[再試行] バッチ ${originalIndex} の未解決ページ ${unresolvedPages.join(', ')} を${recoveryLabel}。`);
+            try {
+                const splitRequests = [];
+                for (const pageNum of unresolvedPages) {
+                    splitRequests.push({
+                        pageNum,
+                        request: await createImageOcrRequestFromPdfPages(pdfPath, [pageNum], contextInstruction)
+                    });
+                }
+                for (const item of splitRequests) {
+                    const newIndex = requests.length;
+                    requests.push(item.request);
+                    batchMetadata.push({
+                        startPage: item.pageNum,
+                        numPages: 1,
+                        pages: [item.pageNum],
+                        forceSync: processMode === 'batch',
+                        modelIndex: Number(meta.modelIndex || 0),
+                        modelId: meta.modelId || geminiModelPriority[Number(meta.modelIndex || 0)]
+                    });
+                    nextPendingIndices.push(newIndex);
+                }
+                splitBatchIndices.add(originalIndex);
+                progressState.total = requests.length;
+            } catch (e) {
+                const detail = `単ページ再試行用の画像化に失敗: ${e.message}`;
+                setPageErrorForPages(unresolvedPages, detail);
+                console.warn(`[再試行] ${detail}。`);
+
+                // 一部ページを既に確定した親バッチは再送しない。
+                // 全ページ未解決で親側の枠が残る場合だけ、親要求を再試行する。
+                const hasResolvedPage = meta.pages.some(pageNum => pageMap.has(pageNum));
+                if (!hasResolvedPage && retryBudget.canRetry(originalIndex)) {
+                    nextPendingIndices.push(originalIndex);
+                }
+            }
+            return true;
+        };
+
+        const enqueueNextGeminiModel = async (meta, unresolvedPages, nextPendingIndices, response = null) => {
+            if (aiProvider !== 'gemini' || unresolvedPages.length === 0) return false;
+            const nextModel = selectNextGeminiModel(geminiModelPriority, meta.modelIndex, response);
+            if (!nextModel) return false;
+            const { modelIndex: nextModelIndex, modelId: nextModelId } = nextModel;
+
+            console.warn(
+                `[モデル切替] ${meta.modelId || geminiModelPriority[Number(meta.modelIndex || 0)]} で未解決の ` +
+                `ページ ${unresolvedPages.join(', ')} を ${nextModelId} へ切替えます。`
+            );
+            try {
+                for (const pageNum of unresolvedPages) {
+                    const newIndex = requests.length;
+                    requests.push(await createImageOcrRequestFromPdfPages(pdfPath, [pageNum], contextInstruction));
+                    batchMetadata.push({
+                        startPage: pageNum,
+                        numPages: 1,
+                        pages: [pageNum],
+                        forceSync: processMode === 'batch',
+                        modelIndex: nextModelIndex,
+                        modelId: nextModelId
+                    });
+                    nextPendingIndices.push(newIndex);
+                }
+                progressState.total = requests.length;
+                return true;
+            } catch (e) {
+                const detail = `次モデル再試行用の画像化に失敗: ${e.message}`;
+                setPageErrorForPages(unresolvedPages, detail);
+                console.warn(`[モデル切替] ${detail}。`);
+                return false;
+            }
+        };
+
+        while (pendingIndices.length > 0) {
             const currentRequests = pendingIndices.map(i => requests[i]);
             const currentMetadata = pendingIndices.map(i => batchMetadata[i]);
+            const currentAttempts = pendingIndices.map(i => retryBudget.begin(i));
+            const maxCurrentAttempt = Math.max(...currentAttempts);
+            if (maxCurrentAttempt > 1) {
+                console.log(`[情報] ${pendingIndices.length} 件の要求をリトライ中 (個別試行 最大 ${maxCurrentAttempt}/${MAX_RETRIES})...`);
+            }
             
             let batchResults;
             try {
@@ -1208,85 +1690,233 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 } else {
                     // Resilience: Use a persistence file for the batch state
                     const persistenceFile = `${pdfPath}.batch_state.txt`;
-                    batchResults = await runBatches(currentRequests, currentMetadata, batchProcessor, progressState, persistenceFile, processMode);
+                    batchResults = await runGeminiRequestsWithRecoveryTransport(
+                        currentRequests,
+                        currentMetadata,
+                        batchProcessor,
+                        progressState,
+                        persistenceFile,
+                        processMode
+                    );
                 }
             } catch (batchError) {
                 console.error(`[エラー] バッチAPI呼び出しが失敗しました: ${batchError.message}`);
-                const detail = `バッチAPI呼び出し失敗 (試行 ${retryCount + 1}/${MAX_RETRIES}): ${batchError.message}`;
-                for (const m of currentMetadata) {
-                    setPageErrorForPages(m.pages, detail);
+                const nextPendingIndices = [];
+                for (let i = 0; i < currentMetadata.length; i++) {
+                    const originalIndex = pendingIndices[i];
+                    const meta = currentMetadata[i];
+                    const attempt = currentAttempts[i];
+                    const unresolvedPages = meta.pages.filter(pageNum => !pageMap.has(pageNum));
+                    const detail = `バッチAPI呼び出し失敗 (試行 ${attempt}/${MAX_RETRIES}): ${batchError.message}`;
+                    setPageErrorForPages(unresolvedPages, detail);
+
+                    if (retryBudget.canRetry(originalIndex)) {
+                        nextPendingIndices.push(originalIndex);
+                        continue;
+                    }
+
+                    const splitQueued = await enqueueSinglePageRetries(
+                        originalIndex,
+                        meta,
+                        unresolvedPages,
+                        nextPendingIndices
+                    );
+                    const modelQueued = splitQueued
+                        ? false
+                        : await enqueueNextGeminiModel(meta, unresolvedPages, nextPendingIndices);
+                    if (!splitQueued && !modelQueued && unresolvedPages.length > 0) {
+                        console.error(`[エラー] 要求 ${originalIndex} (ページ ${unresolvedPages.join(', ')}) は再試行上限に達しました。`);
+                    }
                 }
-                // バッチ全体が失敗した場合、中間結果を保存してリトライを続行
-                saveIntermediateResults();
-                retryCount++;
+
+                pendingIndices = nextPendingIndices;
+                if (pageMap.size > 0 || pageErrorMap.size > 0) {
+                    saveIntermediateResults();
+                }
                 continue;
             }
 
             const nextPendingIndices = [];
 
-            for (let i = 0; i < batchResults.length; i++) {
+            for (let i = 0; i < currentRequests.length; i++) {
                 const originalIndex = pendingIndices[i];
-                const result = batchResults[i];
+                const result = batchResults[i] || { error: { message: 'Result missing for this request item' } };
                 const meta = batchMetadata[originalIndex];
                 
                 let success = false;
                 let text = "";
-                let normalizedPageMap = null;
+                let splitPages = [];
+                const responseDiagnostic = summarizeAiResponse(result.response);
+                const explicitSafetyStop = isExplicitSafetyStop(result.response);
 
-                if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
-                    text = result.response.candidates[0].content.parts.map(p => p.text).join('');
-
-                    const normalized = toAbsoluteBatchPageMap(text, meta.pages);
+                if (!result.error && result.response?.candidates?.[0]) {
+                    const responseParts = result.response.candidates[0].content?.parts || [];
+                    text = responseParts.map(p => p.text || '').join('');
+                    const assessment = applyOcrBatchTextResult(
+                        text,
+                        meta.pages,
+                        pageMap,
+                        emptyResponseCounts
+                    );
+                    const normalized = assessment.normalized;
                     const strictMarkerMatch = normalized.beginCount === meta.numPages && normalized.endCount === meta.numPages;
 
-                    if (strictMarkerMatch && normalized.validRelativeCount === meta.numPages) {
-                        success = true;
-                        normalizedPageMap = normalized.pageMap;
-                    } else if (normalized.ok) {
-                        success = true;
-                        normalizedPageMap = normalized.pageMap;
+                    if (normalized.ok && !(strictMarkerMatch && normalized.validRelativeCount === meta.numPages)) {
                         if (normalized.missingRelativePages.length > 0) {
-                            console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) で空ページまたはマーカー欠落を検出。相対ページ ${normalized.missingRelativePages.join(',')} を空本文で補完しました。`);
+                            console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) で空ページまたはマーカー欠落を検出しました。相対ページ ${normalized.missingRelativePages.join(',')} だけを再試行します。`);
                         } else {
                             console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) のマーカー形式にゆらぎがありましたが、抽出結果を採用しました。開始:${normalized.beginCount}, 終了:${normalized.endCount}`);
                         }
-                    } else {
+                    } else if (!normalized.ok && !(meta.pages.length === 1 && text.trim().length === 0)) {
                         const detail = `バッチ検証失敗: expected markers=${meta.numPages}, begin=${normalized.beginCount}, end=${normalized.endCount}, validRelative=${normalized.validRelativeCount}`;
-                        setPageErrorForPages(meta.pages, detail);
+                        setPageErrorForPages(assessment.unresolvedPages, detail);
                         console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) の検証に失敗しました。期待されるマーカー数: ${meta.numPages}, 実際: 開始:${normalized.beginCount}, 終了:${normalized.endCount}。`);
                     }
 
-                    if (success) {
-                        const emptyPages = findEmptyOcrPages(normalizedPageMap, meta.pages);
-                        if (emptyPages.length > 0) {
-                            const detail = `AI OCRがページマーカーのみ、または空本文を返しました。空本文ページ: ${emptyPages.join(', ')}`;
-                            setPageErrorForPages(emptyPages, detail);
-                            console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) で空本文を検出しました: ${emptyPages.join(', ')}。`);
-                            success = false;
-                            normalizedPageMap = null;
+                    clearPageErrorsForPages(assessment.usefulPages);
+
+                    if (assessment.emptyPages.length > 0) {
+                        const detail = `AI OCRがページマーカーのみ、または空本文を返しました。空本文ページ: ${assessment.emptyPages.join(', ')}。応答診断: ${responseDiagnostic}`;
+                        setPageErrorForPages(assessment.emptyPages, detail);
+                        console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) で空本文を検出しました: ${assessment.emptyPages.join(', ')}。`);
+                        console.warn(`[診断] ${responseDiagnostic}`);
+                    }
+
+                    // 表を書き起こさず説明だけを返したページは、本文を退避してから未解決へ戻す。
+                    // 未解決になれば既存の単ページ再試行・モデル切替がそのまま働く。
+                    const droppedTablePages = findDroppedTablePages(pageMap, assessment.usefulPages)
+                        .filter(pageNum => (droppedTableAttempts.get(pageNum) || 0) < MAX_TABLE_RETRIES);
+                    if (droppedTablePages.length > 0) {
+                        for (const pageNum of droppedTablePages) {
+                            if (!droppedTableFallback.has(pageNum)) {
+                                droppedTableFallback.set(pageNum, pageMap.get(pageNum));
+                            }
+                            droppedTableAttempts.set(pageNum, (droppedTableAttempts.get(pageNum) || 0) + 1);
+                            pageMap.delete(pageNum);
+                        }
+                        const detail = `表が書き起こされず説明文で置き換えられました。対象ページ: ${droppedTablePages.join(', ')}`;
+                        setPageErrorForPages(droppedTablePages, detail);
+                        console.warn(`[警告] バッチ ${originalIndex} で表の取りこぼしを検出しました: ページ ${droppedTablePages.join(', ')}。再試行します。`);
+                    }
+
+                    const confirmationCandidates = assessment.unresolvedPages.filter(
+                        pageNum => (emptyResponseCounts.get(pageNum) || 0) >= MIN_EMPTY_CONFIRMATIONS
+                    );
+                    if (confirmationCandidates.length > 0) {
+                        try {
+                            const confirmedBlankPages = await confirmRepeatedEmptyPdfPages(pdfPath, confirmationCandidates);
+                            for (const pageNum of confirmedBlankPages) {
+                                pageMap.set(pageNum, buildBlankOcrPageContent(pageNum, false));
+                            }
+                            clearPageErrorsForPages(confirmedBlankPages);
+                            if (confirmedBlankPages.length > 0) {
+                                console.warn(`[白紙確認] Geminiの反復空応答とスキャナ汚れ許容判定が一致したため、ページ ${confirmedBlankPages.join(', ')} を白紙として確定しました。`);
+                            }
+                        } catch (e) {
+                            console.warn(`[白紙確認] 二次判定に失敗したため空本文ページを白紙確定しません: ${e.message}`);
                         }
                     }
+
+                    const unresolvedPages = meta.pages.filter(pageNum => !pageMap.has(pageNum));
+                    success = unresolvedPages.length === 0;
+                    if (
+                        !success &&
+                        !explicitSafetyStop &&
+                        aiProvider === 'gemini' &&
+                        (meta.pages.length > 1 || (processMode === 'batch' && !meta.forceSync)) &&
+                        !splitBatchIndices.has(originalIndex)
+                    ) {
+                        splitPages = unresolvedPages;
+                    }
                 } else {
-                    setPageErrorForPages(meta.pages, `バッチAPIエラー: ${JSON.stringify(result.error || "内容なし")}`);
-                    console.warn(`[警告] バッチ ${originalIndex} APIエラー: ${JSON.stringify(result.error || "内容なし")}`);
+                    const unresolvedPages = meta.pages.filter(pageNum => !pageMap.has(pageNum));
+                    const errorMessage = result.error?.message
+                        ? normalizeErrorDetail(result.error.message)
+                        : `AI応答にOCR本文なし。応答診断: ${responseDiagnostic}`;
+                    setPageErrorForPages(unresolvedPages, errorMessage);
+                    console.warn(`[警告] バッチ ${originalIndex} のOCR応答を採用できません: ${errorMessage}`);
+                    if (
+                        !retryBudget.canRetry(originalIndex) &&
+                        !explicitSafetyStop &&
+                        aiProvider === 'gemini' &&
+                        (meta.pages.length > 1 || (processMode === 'batch' && !meta.forceSync)) &&
+                        !splitBatchIndices.has(originalIndex)
+                    ) {
+                        splitPages = unresolvedPages;
+                    }
                 }
 
                 if (success) {
                     clearPageErrorsForPages(meta.pages);
-                    for (const [pNum, pContent] of normalizedPageMap) {
-                        pageMap.set(pNum, pContent);
+                } else if (explicitSafetyStop) {
+                    console.warn(`[安全停止] ページ ${meta.pages.join(', ')} は別Geminiモデルへ自動送信しません。`);
+                } else if (splitPages.length > 0) {
+                    const splitQueued = await enqueueSinglePageRetries(
+                        originalIndex,
+                        meta,
+                        splitPages,
+                        nextPendingIndices
+                    );
+                    if (!splitQueued) {
+                        if (retryBudget.canRetry(originalIndex)) {
+                            nextPendingIndices.push(originalIndex);
+                        } else {
+                            await enqueueNextGeminiModel(meta, splitPages, nextPendingIndices, result.response);
+                        }
                     }
-                } else {
+                } else if (retryBudget.canRetry(originalIndex)) {
                     nextPendingIndices.push(originalIndex);
+                } else {
+                    const unresolvedPages = meta.pages.filter(pageNum => !pageMap.has(pageNum));
+                    const modelQueued = await enqueueNextGeminiModel(meta, unresolvedPages, nextPendingIndices, result.response);
+                    if (!modelQueued && unresolvedPages.length > 0) {
+                        console.error(`[エラー] 要求 ${originalIndex} (ページ ${unresolvedPages.join(', ')}) は再試行上限に達しました。`);
+                    }
                 }
             }
 
             pendingIndices = nextPendingIndices;
-            retryCount++;
 
             // リトライ間で中間結果を保存（クラッシュ耐性）
             if (pendingIndices.length > 0 && (pageMap.size > 0 || pageErrorMap.size > 0)) {
                 saveIntermediateResults();
+            }
+        }
+
+        // 表の再取得に失敗したページは、退避しておいた本文へ戻す。
+        // 表は欠けたままだが、周囲の本文まで失うよりはよい。
+        const tableFallbackPages = [];
+        for (const [pageNum, fallbackBlock] of droppedTableFallback) {
+            if (pageMap.has(pageNum) || !fallbackBlock) continue;
+            pageMap.set(pageNum, fallbackBlock);
+            tableFallbackPages.push(pageNum);
+        }
+        if (tableFallbackPages.length > 0) {
+            clearPageErrorsForPages(tableFallbackPages);
+            console.warn(
+                `[警告] ページ ${tableFallbackPages.join(', ')} は再試行しても表を書き起こせませんでした。` +
+                `表以外の本文を採用しています。該当ページは目視確認してください。`
+            );
+        }
+
+        const unresolvedAfterAi = pageIndices.filter(pageNum => !pageMap.has(pageNum));
+        if (unresolvedAfterAi.length > 0) {
+            try {
+                const recovered = await recoverPagesFromTrustedEmbeddedText(
+                    pdfPath,
+                    unresolvedAfterAi,
+                    pageMap,
+                    totalPages
+                );
+                for (const item of recovered) {
+                    pageErrorMap.delete(item.pageNum);
+                    console.warn(
+                        `[PDFテキスト救済] ページ ${item.pageNum} を埋め込み文字層から復旧しました ` +
+                        `(近接${item.neighborCount}頁、Jaccard=${item.bigramJaccard.toFixed(3)}、長さ比=${item.lengthRatio.toFixed(3)})。`
+                    );
+                }
+            } catch (e) {
+                console.warn(`[PDFテキスト救済] ローカル復旧判定に失敗しました: ${e.message}`);
             }
         }
     }
@@ -1763,5 +2393,20 @@ module.exports = {
     pptxToText,
     imageToText,
     getOcrPrompt,
-    estimateRequestsPayloadBytes
+    estimateRequestsPayloadBytes,
+    applyOcrBatchTextResult,
+    confirmRepeatedEmptyPdfPages,
+    createIndependentRetryBudget,
+    extractPagesFromMarkdown,
+    stripOcrSettingsComments,
+    summarizeAiResponse,
+    hasUsableAiResponseText,
+    isExplicitSafetyStop,
+    selectNextGeminiModel,
+    runSingleBatch,
+    runGeminiRequestsWithRecoveryTransport,
+    compareTextSimilarity,
+    recoverPagesFromTrustedEmbeddedText,
+    describesTableWithoutTranscribing,
+    findDroppedTablePages
 };
