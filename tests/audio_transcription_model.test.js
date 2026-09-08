@@ -442,6 +442,66 @@ test('Gemini 3.5 Transcribe normalizes zero-based spk: labels from the live API'
     ]);
 });
 
+test('Gemini responses that omit every speaker label are treated as a single-speaker recording', async () => {
+    const text = '前半です。後半です。';
+    const parsed = parseGeminiTranscribeResponse(geminiInteractionResponse(text, [
+        interactionWordInfo(text, '前半です', undefined, '0.100s', '0.600s'),
+        interactionWordInfo(text, '後半です', undefined, '1.000s', '1.600s'),
+    ]));
+
+    assert.equal(parsed.singleSpeakerFallback, true);
+    assert.deepEqual(parsed.items, [
+        { speaker: '話者1', speakerId: 'spk:0', startMs: 100, endMs: 600, time: '00:00:00.100', endTime: '00:00:00.600', text: '前半です。' },
+        { speaker: '話者1', speakerId: 'spk:0', startMs: 1000, endMs: 1600, time: '00:00:01.000', endTime: '00:00:01.600', text: '後半です。' },
+    ]);
+    assert.equal(parsed.recoveredWordMetadataCount, 2);
+
+    const partialText = '話者ありです。時刻なしです。';
+    const partial = parseGeminiTranscribeResponse(geminiInteractionResponse(partialText, [
+        interactionWordInfo(partialText, '話者ありです', 'spk:0', '0.100s', '0.600s'),
+        interactionWordInfo(partialText, '時刻なしです', undefined, undefined, undefined),
+    ]));
+    assert.equal(partial.singleSpeakerFallback, false);
+
+    const untimedText = '時刻がありません。';
+    const untimed = parseGeminiTranscribeResponse(geminiInteractionResponse(untimedText, [
+        interactionWordInfo(untimedText, '時刻がありません', undefined, undefined, undefined),
+    ]));
+    assert.equal(untimed.singleSpeakerFallback, false);
+    assert.equal(String(untimed.items[0]?.speakerId || ''), '');
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-gemini-transcribe-single-speaker-'));
+    const audioPath = path.join(tempDir, 'sample.m4a');
+    fs.writeFileSync(audioPath, 'synthetic-audio-bytes');
+    const originalFetch = global.fetch;
+    global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(geminiInteractionResponse(text, [
+            interactionWordInfo(text, '前半です', undefined, '0.100s', '0.600s'),
+            interactionWordInfo(text, '後半です', undefined, '1.000s', '1.600s'),
+        ])),
+    });
+
+    try {
+        const result = await transcribeWithGemini(audioPath, {
+            provider: 'gemini',
+            model: 'gemini-3.5-transcribe',
+            geminiApiKey: 'synthetic-test-key',
+            language: 'ja',
+            target: 'general',
+            contextText: '',
+            postprocessAi: 'off',
+            silenceTrim: {},
+        });
+        assert.equal(result.items.length, 2);
+        assert.deepEqual(result.items.map(item => item.speakerId), ['spk:0', 'spk:0']);
+    } finally {
+        global.fetch = originalFetch;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('Gemini sparse punctuation metadata is absorbed into neighboring timed speaker turns', () => {
     const text = 'こんにちは。次です!';
     const parsed = parseGeminiTranscribeResponse(geminiInteractionResponse(text, [

@@ -59,6 +59,12 @@ const GEMINI_CHUNK_MIN_DURATION_SEC = 2 * 60;
 const GEMINI_TRANSCRIBE_MAX_DURATION_SEC = 10 * 60;
 const GEMINI_TRANSCRIBE_CHUNK_PADDING_SEC = 5;
 const GEMINI_TRANSCRIBE_MAX_TIMESTAMP_REGRESSION_MS = 30 * 1000;
+// The API sometimes returns word_info annotations with complete timestamps but
+// no speaker field at all, even when diarization is requested. This is
+// deterministic per input: the same audio always answers the same way, while a
+// slightly different cut of the same speech does get speaker labels. Treat a
+// response whose words carry no speaker at all as a single-speaker recording.
+const GEMINI_TRANSCRIBE_SINGLE_SPEAKER_ID = 'spk:0';
 const REAZON_K2_DEFAULT_CHUNK_SEC = 25;
 const REAZON_K2_MIN_CHUNK_SEC = 5;
 const REAZON_K2_MAX_CHUNK_SEC = 120;
@@ -3171,6 +3177,7 @@ function parseGeminiTranscribeResponse(response: any) {
     const plainText: string[] = [];
     let wordInfoCount = 0;
     let recoveredWordMetadataCount = 0;
+    let speakerAnnotatedWordCount = 0;
     for (const step of response?.steps || []) {
         for (const content of step?.content || []) {
             if (content?.type !== 'text') continue;
@@ -3184,7 +3191,10 @@ function parseGeminiTranscribeResponse(response: any) {
             for (let index = words.length - 1; index >= 0; index--) {
                 const speakerId = String(words[index]?.speaker || '').trim();
                 const startSeconds = geminiOffsetSeconds(words[index]?.startOffset);
-                if (speakerId) followingSpeakerId = speakerId;
+                if (speakerId) {
+                    speakerAnnotatedWordCount++;
+                    followingSpeakerId = speakerId;
+                }
                 if (Number.isFinite(startSeconds)) followingStartMs = Math.round(startSeconds * 1000);
                 nextSpeakerIds[index] = followingSpeakerId;
                 nextStartMs[index] = followingStartMs;
@@ -3258,6 +3268,21 @@ function parseGeminiTranscribeResponse(response: any) {
             flush();
         }
     }
+    const singleSpeakerFallback = items.length > 0
+        && wordInfoCount > 0
+        && speakerAnnotatedWordCount === 0
+        && items.every(item => (
+            !String(item.speakerId || '').trim()
+            && Number.isFinite(item.startMs)
+            && Number.isFinite(item.endMs)
+        ));
+    if (singleSpeakerFallback) {
+        for (const item of items) {
+            item.speakerId = GEMINI_TRANSCRIBE_SINGLE_SPEAKER_ID;
+            item.speaker = normalizeGeminiTranscribeSpeaker(GEMINI_TRANSCRIBE_SINGLE_SPEAKER_ID);
+        }
+        recoveredWordMetadataCount += wordInfoCount;
+    }
     if (items.length > 0) {
         let maxSeenStartMs = Number.NEGATIVE_INFINITY;
         let timestampRegressionMs = 0;
@@ -3274,6 +3299,7 @@ function parseGeminiTranscribeResponse(response: any) {
             overview: {},
             wordInfoCount,
             recoveredWordMetadataCount,
+            singleSpeakerFallback,
             timestampRegressionMs,
         };
     }
@@ -3284,6 +3310,7 @@ function parseGeminiTranscribeResponse(response: any) {
         overview: {},
         wordInfoCount,
         recoveredWordMetadataCount,
+        singleSpeakerFallback: false,
         timestampRegressionMs: 0,
     };
 }
@@ -3347,7 +3374,9 @@ async function transcribeWithGemini(filePath: string, options: TranscriptionOpti
         if (incompleteItems.length > 0) {
             throw new Error(`Gemini transcription response contained ${incompleteItems.length} utterance(s) without the required speaker ID or start/end word timestamps.`);
         }
-        if (result.recoveredWordMetadataCount > 0) {
+        if (result.singleSpeakerFallback) {
+            console.warn(`[Gemini Transcribe] 応答のword_info ${result.wordInfoCount} 件すべてに話者IDがありませんでした。単一話者の録音として ${GEMINI_TRANSCRIBE_SINGLE_SPEAKER_ID} を補完します。複数話者の録音であれば話者分離は行われていません。`);
+        } else if (result.recoveredWordMetadataCount > 0) {
             console.warn(`[Gemini Transcribe] ${result.recoveredWordMetadataCount} 件のword_infoで省略された話者・時刻情報を、前後の注釈から発言単位へ統合しました。`);
         }
         return result;
