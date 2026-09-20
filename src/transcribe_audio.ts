@@ -59,6 +59,9 @@ const GEMINI_CHUNK_MIN_DURATION_SEC = 2 * 60;
 const GEMINI_TRANSCRIBE_MAX_DURATION_SEC = 10 * 60;
 const GEMINI_TRANSCRIBE_CHUNK_PADDING_SEC = 5;
 const GEMINI_TRANSCRIBE_MAX_TIMESTAMP_REGRESSION_MS = 30 * 1000;
+// A rollback is not deterministic for the same audio (a one-off response carried a
+// word ~99000s ahead), so resend before giving up.
+const GEMINI_TRANSCRIBE_REGRESSION_ATTEMPTS = 3;
 // The API sometimes returns word_info annotations with complete timestamps but
 // no speaker field at all, even when diarization is requested. This is
 // deterministic per input: the same audio always answers the same way, while a
@@ -3344,22 +3347,31 @@ async function transcribeWithGemini(filePath: string, options: TranscriptionOpti
             },
         };
 
-    const response = await fetchWithRetry('Gemini transcription request', () => fetch(endpoint, {
-        method: 'POST',
-        headers: dedicatedTranscription
-            ? { 'Content-Type': 'application/json', 'x-goog-api-key': options.geminiApiKey || '' }
-            : { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-    }));
+    const maxAttempts = dedicatedTranscription ? GEMINI_TRANSCRIBE_REGRESSION_ATTEMPTS : 1;
+    let parsed: any;
+    let result: any;
+    for (let attempt = 1; ; attempt++) {
+        const response = await fetchWithRetry('Gemini transcription request', () => fetch(endpoint, {
+            method: 'POST',
+            headers: dedicatedTranscription
+                ? { 'Content-Type': 'application/json', 'x-goog-api-key': options.geminiApiKey || '' }
+                : { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request),
+        }));
 
-    const body = await response.text();
-    if (!response.ok) {
-        throw new Error(`Gemini transcription failed: ${response.status} ${body}`);
+        const body = await response.text();
+        if (!response.ok) {
+            throw new Error(`Gemini transcription failed: ${response.status} ${body}`);
+        }
+
+        parsed = JSON.parse(body);
+        if (!dedicatedTranscription) break;
+        result = parseGeminiTranscribeResponse(parsed);
+        if (result.timestampRegressionMs <= GEMINI_TRANSCRIBE_MAX_TIMESTAMP_REGRESSION_MS || attempt >= maxAttempts) break;
+        console.warn(`[Gemini Transcribe] 応答の時刻が ${(result.timestampRegressionMs / 1000).toFixed(3)} 秒巻き戻っています。同じ音声を再送信します (${attempt + 1}/${maxAttempts})`);
     }
 
-    const parsed = JSON.parse(body);
     if (dedicatedTranscription) {
-        const result = parseGeminiTranscribeResponse(parsed);
         if (result.wordInfoCount === 0) {
             throw new Error('Gemini transcription response did not contain word_info annotations required for speaker diarization and word timestamps.');
         }

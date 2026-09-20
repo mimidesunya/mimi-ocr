@@ -863,15 +863,16 @@ test('Gemini 3.5 Transcribe refuses text-only responses instead of emitting one 
         );
 
         const rollbackText = '最初です。後半です。巻き戻ります。';
-        global.fetch = async () => ({
-            ok: true,
-            status: 200,
-            text: async () => JSON.stringify(geminiInteractionResponse(rollbackText, [
-                interactionWordInfo(rollbackText, '最初です', 'spk_1', '0.100s', '1.000s'),
-                interactionWordInfo(rollbackText, '後半です', 'spk_1', '100.000s', '101.000s'),
-                interactionWordInfo(rollbackText, '巻き戻ります', 'spk_1', '40.000s', '41.000s'),
-            ])),
-        });
+        const rollbackResponse = geminiInteractionResponse(rollbackText, [
+            interactionWordInfo(rollbackText, '最初です', 'spk_1', '0.100s', '1.000s'),
+            interactionWordInfo(rollbackText, '後半です', 'spk_1', '100.000s', '101.000s'),
+            interactionWordInfo(rollbackText, '巻き戻ります', 'spk_1', '40.000s', '41.000s'),
+        ]);
+        let rollbackCalls = 0;
+        global.fetch = async () => {
+            rollbackCalls++;
+            return { ok: true, status: 200, text: async () => JSON.stringify(rollbackResponse) };
+        };
         await assert.rejects(
             () => transcribeWithGemini(audioPath, {
                 provider: 'gemini',
@@ -885,6 +886,33 @@ test('Gemini 3.5 Transcribe refuses text-only responses instead of emitting one 
             }),
             /non-monotonic timestamp regression of 60\.000 seconds/,
         );
+        assert.equal(rollbackCalls, 3);
+
+        const recoveredText = '最初です。次です。';
+        const responses = [
+            rollbackResponse,
+            geminiInteractionResponse(recoveredText, [
+                interactionWordInfo(recoveredText, '最初です', 'spk_1', '0.100s', '1.000s'),
+                interactionWordInfo(recoveredText, '次です', 'spk_1', '2.000s', '3.000s'),
+            ]),
+        ];
+        let recoveredCalls = 0;
+        global.fetch = async () => {
+            const response = responses[Math.min(recoveredCalls++, responses.length - 1)];
+            return { ok: true, status: 200, text: async () => JSON.stringify(response) };
+        };
+        const recovered = await transcribeWithGemini(audioPath, {
+            provider: 'gemini',
+            model: 'gemini-3.5-transcribe',
+            geminiApiKey: 'synthetic-test-key',
+            language: 'ja',
+            target: 'general',
+            contextText: '',
+            postprocessAi: 'off',
+            silenceTrim: {},
+        });
+        assert.equal(recoveredCalls, 2);
+        assert.deepEqual(recovered.items.map(item => item.text), ['最初です。', '次です。']);
     } finally {
         global.fetch = originalFetch;
         fs.rmSync(tempDir, { recursive: true, force: true });

@@ -286,17 +286,24 @@ async function prepareAudioForTranscription(filePath, settings: any = {}) {
     const outputArgs = outputFormat === 'wav'
         ? [tempPath]
         : ['-c:a', 'aac', '-b:a', outputBitrate, '-movflags', '+faststart', tempPath];
+    const buildTrimArgs = filterScriptArgs => [
+        '-y',
+        '-hide_banner',
+        '-nostdin',
+        '-i', filePath,
+        ...filterScriptArgs,
+        '-map', '[outa]',
+        '-vn',
+        ...outputArgs,
+    ];
     try {
-        await runProcess(ffmpeg, [
-            '-y',
-            '-hide_banner',
-            '-nostdin',
-            '-i', filePath,
-            '-filter_complex_script', filterScriptPath,
-            '-map', '[outa]',
-            '-vn',
-            ...outputArgs,
-        ]);
+        // FFmpeg 7.0+ reads option values from files via "-/option"; FFmpeg 9 removed -filter_complex_script.
+        try {
+            await runProcess(ffmpeg, buildTrimArgs(['-/filter_complex', filterScriptPath]));
+        } catch (err) {
+            if (!/Unrecognized option|Option not found/i.test(String(err?.message || ''))) throw err;
+            await runProcess(ffmpeg, buildTrimArgs(['-filter_complex_script', filterScriptPath]));
+        }
     } finally {
         removeFileQuietly(filterScriptPath);
     }
