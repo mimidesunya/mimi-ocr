@@ -5,13 +5,13 @@
       "chatModels": [
         "gemini-3.1-flash-lite",
         "gemini-3-flash-preview",
-        "gemini-3.6-flash"
+        "gemini-3.8-flash"
       ],
       "transcriptionModel": "gemini-3.5-transcribe"
     },
     "openai": {
-      "chatModel": "gpt-5.6-sol",
-      "transcriptionModel": "gpt-4o-transcribe-diarize"
+      "chatModel": "gpt-6-astra",
+      "transcriptionModel": "gpt-transcribe"
     },
     "claude": {
       "chatModel": "claude-sonnet-5"
