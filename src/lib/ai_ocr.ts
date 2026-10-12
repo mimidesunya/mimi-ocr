@@ -26,6 +26,14 @@ function formatTime(ms) {
     return [h, m, s].map(v => v.toString().padStart(2, '0')).join(':');
 }
 
+/**
+ * 文字の無いページについて AI に書かせる注記。
+ *
+ * 裏写りだけの面・灰色の封筒の裏・枠線だけの面は、インク量の白紙判定を通らない。
+ * マーカーだけの応答は取りこぼしと区別できないため、AI 自身に「文字なし」と明記させる。
+ */
+const NO_TEXT_NOTE = '(--! 文字なし)';
+
 function getOcrPrompt(numPages, contextInstruction = "") {
     return `
 # ROLE
@@ -52,6 +60,7 @@ ${numPages} pages of a Japanese document.
    - **Corrections**: Fix obvious OCR errors (0 vs O). Keep original typos with \`(-- as is)\`.
    - **Tables**: ALWAYS transcribe a ruled or statistical table as a Markdown table. NEVER replace a table with a description, a summary, or a note such as \`(--! A table showing ...)\`, and never drop rows or columns because the table is long or dense. Output every row, including header rows, subtotal/total rows (小計/合計) and empty cells (leave such a cell empty). Transcribe the numerals exactly as printed. When a vertically written table puts one record in one column, transpose it so that one Markdown row is one record, and read the records from right to left.
    - **Visuals**: If there are photos or diagrams, provide an explanation for them in Japanese formatted as \`(--! Explanation)\`. This applies to photographs, illustrations and figures only; never use it in place of a table.
+   - **Pages Without Text**: If a page has no readable text of its own (a blank page, the back of a sheet where only text bleeding through from the reverse side is faintly visible, an envelope back, a page with only ruled lines or a frame), output \`${NO_TEXT_NOTE}\` as its only content between the markers. Never transcribe text bleeding through from the reverse side.
    - **Exclusions**: Omit printed page numbers from body.
      - **Redactions**: Replace blacked-out or redacted parts with "■".
      - **Margins**:
@@ -433,6 +442,17 @@ function isExplicitSafetyStop(response) {
         .some(candidate => safetyFinishReasons.has(String(candidate?.finishReason || '').trim().toUpperCase()));
 }
 
+/**
+ * Gemini の引用判定（RECITATION）による停止。
+ *
+ * 公開済みの文章（ウェブ記事の印刷など）と一致するページで、同じ要求でも確率的に起きる。
+ * 本文は空か途中までなので採用せず、白紙の根拠としても数えない。
+ */
+function isRecitationStop(response) {
+    return (Array.isArray(response?.candidates) ? response.candidates : [])
+        .some(candidate => String(candidate?.finishReason || '').trim().toUpperCase() === 'RECITATION');
+}
+
 function selectNextGeminiModel(modelPriority, currentModelIndex, response = null) {
     if (isExplicitSafetyStop(response)) return null;
     const nextModelIndex = Number(currentModelIndex || 0) + 1;
@@ -520,6 +540,10 @@ function hasUsefulOcrPageText(block) {
     return text.length > 0;
 }
 
+function isNoTextOcrPage(block) {
+    return stripOcrPageMarkers(block).replace(/\s+/g, '') === NO_TEXT_NOTE.replace(/\s+/g, '');
+}
+
 function findEmptyOcrPages(pageMap, pages) {
     const emptyPages = [];
     for (const pageNum of pages || []) {
@@ -574,8 +598,10 @@ function findDroppedTablePages(pageMap, pages) {
  *
  * 完全な空応答は、単ページリクエストの場合だけ「空本文の確認」として数える。
  * 複数ページの完全な空応答では本文ページまで白紙扱いする危険があるため数えない。
+ * options.countEmpty が false のとき（引用判定による停止など）は、空でも数えない。
  */
-function applyOcrBatchTextResult(rawText, metaPages, pageMap, emptyResponseCounts) {
+function applyOcrBatchTextResult(rawText, metaPages, pageMap, emptyResponseCounts, options: any = {}) {
+    const countEmpty = options.countEmpty !== false;
     const pages = Array.isArray(metaPages) ? metaPages : [];
     const text = typeof rawText === 'string' ? rawText : '';
     const normalized = toAbsoluteBatchPageMap(text, pages);
@@ -596,8 +622,10 @@ function applyOcrBatchTextResult(rawText, metaPages, pageMap, emptyResponseCount
         emptyPages = [pages[0]];
     }
 
-    for (const pageNum of emptyPages) {
-        emptyResponseCounts.set(pageNum, (emptyResponseCounts.get(pageNum) || 0) + 1);
+    if (countEmpty) {
+        for (const pageNum of emptyPages) {
+            emptyResponseCounts.set(pageNum, (emptyResponseCounts.get(pageNum) || 0) + 1);
+        }
     }
 
     return {
@@ -627,6 +655,8 @@ async function confirmRepeatedEmptyPdfPages(pdfPath, pageNumbers) {
 function createIndependentRetryBudget(maxAttempts = 3) {
     const normalizedMaxAttempts = Math.max(1, Math.floor(Number(maxAttempts) || 1));
     const attempts = new Map();
+    const extraAttempts = new Map();
+    const limit = (requestIndex) => normalizedMaxAttempts + (extraAttempts.get(requestIndex) || 0);
 
     return {
         begin(requestIndex) {
@@ -635,11 +665,16 @@ function createIndependentRetryBudget(maxAttempts = 3) {
             return next;
         },
         canRetry(requestIndex) {
-            return (attempts.get(requestIndex) || 0) < normalizedMaxAttempts;
+            return (attempts.get(requestIndex) || 0) < limit(requestIndex);
         },
         count(requestIndex) {
             return attempts.get(requestIndex) || 0;
         },
+        // 確率的にしか通らない失敗（引用判定）だけ、その要求の枠を足す。
+        extend(requestIndex, extra = 1) {
+            extraAttempts.set(requestIndex, (extraAttempts.get(requestIndex) || 0) + Math.max(0, Math.floor(extra)));
+        },
+        limit,
         maxAttempts: normalizedMaxAttempts
     };
 }
@@ -820,6 +855,30 @@ function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}
 
     const json = JSON.stringify(metadata, null, 2).replace(/--/g, '\\u002d\\u002d');
     return `<!-- mimi-ocr-settings\n${json}\n-->`;
+}
+
+/**
+ * 中間結果の末尾メタデータから、作成時の PDF の総ページ数を読む。読めなければ null。
+ */
+function readRecordedTotalPages(content) {
+    const comments = Array.from(String(content || '').matchAll(/<!--\s*mimi-ocr-settings\s*([\s\S]*?)-->/g));
+    if (comments.length === 0) return null;
+    try {
+        const total = Number(JSON.parse(comments[comments.length - 1][1])?.settings?.pages?.total);
+        return Number.isInteger(total) && total > 0 ? total : null;
+    } catch (_e) {
+        return null;
+    }
+}
+
+function moveStaleErrorFile(errorPath) {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-` +
+        `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const stalePath = errorPath.replace(/\.md$/i, `.stale-${stamp}.md`);
+    fs.renameSync(errorPath, stalePath);
+    return stalePath;
 }
 
 function appendOcrSettingsComment(content, sourcePath, inputType, runtimeOptions: any = {}) {
@@ -1251,10 +1310,28 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     let resumedFromErrorFile = false;
     if (!ndlocrOnly && fs.existsSync(errorPath)) {
         const existingContent = fs.readFileSync(errorPath, 'utf-8');
-        pageMap = extractPagesFromMarkdown(existingContent);
-        if (pageMap.size > 0) {
-            resumedFromErrorFile = true;
-            console.log(`[情報] ${errorPath} から再開します (${pageMap.size} ページ完了済み)`);
+        // 中間結果の作成後にページを抜き差しした PDF で再開すると、以降のページが一枚ずつずれる。
+        const recordedTotalPages = readRecordedTotalPages(existingContent);
+        if (recordedTotalPages && recordedTotalPages !== totalPages) {
+            let stalePath;
+            try {
+                stalePath = moveStaleErrorFile(errorPath);
+            } catch (e) {
+                throw new Error(
+                    `PDFのページ数が中間結果の作成時 (${recordedTotalPages} ページ) と違う (${totalPages} ページ) ため再開できません。` +
+                    `中間結果ファイルを退避できませんでした: ${errorPath} (${e.message})。このファイルを削除してから再実行してください。`
+                );
+            }
+            console.warn(
+                `[警告] PDFのページ数が中間結果の作成時 (${recordedTotalPages} ページ) と違う (${totalPages} ページ) ため、` +
+                `再開せず最初からOCRします。中間結果は ${path.basename(stalePath)} に残しました。`
+            );
+        } else {
+            pageMap = extractPagesFromMarkdown(existingContent);
+            if (pageMap.size > 0) {
+                resumedFromErrorFile = true;
+                console.log(`[情報] ${errorPath} から再開します (${pageMap.size} ページ完了済み)`);
+            }
         }
     }
 
@@ -1536,8 +1613,11 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         let pendingIndices = requests.map((_, i) => i);
         const MAX_RETRIES = 3;
         const MIN_EMPTY_CONFIRMATIONS = 2;
+        // 引用判定は同じページでも数回に一度は通るので、単ページ要求に限り枠を足す。
+        const MAX_RECITATION_RETRIES = 5;
         const retryBudget = createIndependentRetryBudget(MAX_RETRIES);
         const emptyResponseCounts = new Map();
+        const recitationRetryCounts = new Map();
         const splitBatchIndices = new Set();
         // 表を書き起こさず説明だけを返したページの再試行管理。
         // 直前の本文は捨てずに保持し、再試行が実らなければ元の本文へ戻す。
@@ -1637,6 +1717,18 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             return true;
         };
 
+        const grantRecitationRetry = (originalIndex, meta) => {
+            if (aiProvider !== 'gemini' || meta.pages.length !== 1) return false;
+            const pageNum = meta.pages[0];
+            if (pageMap.has(pageNum)) return false;
+            const used = recitationRetryCounts.get(pageNum) || 0;
+            if (used >= MAX_RECITATION_RETRIES) return false;
+            recitationRetryCounts.set(pageNum, used + 1);
+            retryBudget.extend(originalIndex);
+            console.warn(`[引用判定] ページ ${pageNum} を同じモデルへ再送します (追加 ${used + 1}/${MAX_RECITATION_RETRIES})。`);
+            return true;
+        };
+
         const enqueueNextGeminiModel = async (meta, unresolvedPages, nextPendingIndices, response = null) => {
             if (aiProvider !== 'gemini' || unresolvedPages.length === 0) return false;
             const nextModel = selectNextGeminiModel(geminiModelPriority, meta.modelIndex, response);
@@ -1677,7 +1769,8 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             const currentAttempts = pendingIndices.map(i => retryBudget.begin(i));
             const maxCurrentAttempt = Math.max(...currentAttempts);
             if (maxCurrentAttempt > 1) {
-                console.log(`[情報] ${pendingIndices.length} 件の要求をリトライ中 (個別試行 最大 ${maxCurrentAttempt}/${MAX_RETRIES})...`);
+                const maxCurrentLimit = Math.max(...pendingIndices.map(i => retryBudget.limit(i)));
+                console.log(`[情報] ${pendingIndices.length} 件の要求をリトライ中 (個別試行 最大 ${maxCurrentAttempt}/${maxCurrentLimit})...`);
             }
             
             let batchResults;
@@ -1748,20 +1841,27 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 let splitPages = [];
                 const responseDiagnostic = summarizeAiResponse(result.response);
                 const explicitSafetyStop = isExplicitSafetyStop(result.response);
+                const recitationStop = isRecitationStop(result.response);
 
                 if (!result.error && result.response?.candidates?.[0]) {
                     const responseParts = result.response.candidates[0].content?.parts || [];
-                    text = responseParts.map(p => p.text || '').join('');
+                    // 引用判定で止まった本文は途中までのことがあるので、一字も採用しない。
+                    text = recitationStop ? '' : responseParts.map(p => p.text || '').join('');
                     const assessment = applyOcrBatchTextResult(
                         text,
                         meta.pages,
                         pageMap,
-                        emptyResponseCounts
+                        emptyResponseCounts,
+                        { countEmpty: !recitationStop }
                     );
                     const normalized = assessment.normalized;
                     const strictMarkerMatch = normalized.beginCount === meta.numPages && normalized.endCount === meta.numPages;
 
-                    if (normalized.ok && !(strictMarkerMatch && normalized.validRelativeCount === meta.numPages)) {
+                    if (recitationStop) {
+                        const detail = `Geminiが引用判定（RECITATION）で本文を返しませんでした。公開済みの文章（ウェブ記事の印刷など）と一致するページで、確率的に起きます。応答診断: ${responseDiagnostic}`;
+                        setPageErrorForPages(assessment.unresolvedPages, detail);
+                        console.warn(`[引用判定] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) は RECITATION で本文が返りませんでした。`);
+                    } else if (normalized.ok && !(strictMarkerMatch && normalized.validRelativeCount === meta.numPages)) {
                         if (normalized.missingRelativePages.length > 0) {
                             console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) で空ページまたはマーカー欠落を検出しました。相対ページ ${normalized.missingRelativePages.join(',')} だけを再試行します。`);
                         } else {
@@ -1775,7 +1875,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
                     clearPageErrorsForPages(assessment.usefulPages);
 
-                    if (assessment.emptyPages.length > 0) {
+                    if (!recitationStop && assessment.emptyPages.length > 0) {
                         const detail = `AI OCRがページマーカーのみ、または空本文を返しました。空本文ページ: ${assessment.emptyPages.join(', ')}。応答診断: ${responseDiagnostic}`;
                         setPageErrorForPages(assessment.emptyPages, detail);
                         console.warn(`[警告] バッチ ${originalIndex} (ページ ${meta.pages.join(',')}) で空本文を検出しました: ${assessment.emptyPages.join(', ')}。`);
@@ -1866,6 +1966,8 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                     }
                 } else if (retryBudget.canRetry(originalIndex)) {
                     nextPendingIndices.push(originalIndex);
+                } else if (recitationStop && grantRecitationRetry(originalIndex, meta)) {
+                    nextPendingIndices.push(originalIndex);
                 } else {
                     const unresolvedPages = meta.pages.filter(pageNum => !pageMap.has(pageNum));
                     const modelQueued = await enqueueNextGeminiModel(meta, unresolvedPages, nextPendingIndices, result.response);
@@ -1896,6 +1998,14 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             console.warn(
                 `[警告] ページ ${tableFallbackPages.join(', ')} は再試行しても表を書き起こせませんでした。` +
                 `表以外の本文を採用しています。該当ページは目視確認してください。`
+            );
+        }
+
+        const noTextPages = pageIndices.filter(pageNum => pageMap.has(pageNum) && isNoTextOcrPage(pageMap.get(pageNum)));
+        if (noTextPages.length > 0) {
+            console.log(
+                `[文字なし] ページ ${noTextPages.join(', ')} は AI が「文字なし」と判定しました` +
+                ` (白紙・裏写りだけの面・封筒の裏など)。気になる場合は目視確認してください。`
             );
         }
 
@@ -2398,10 +2508,13 @@ module.exports = {
     confirmRepeatedEmptyPdfPages,
     createIndependentRetryBudget,
     extractPagesFromMarkdown,
+    readRecordedTotalPages,
     stripOcrSettingsComments,
     summarizeAiResponse,
     hasUsableAiResponseText,
     isExplicitSafetyStop,
+    isRecitationStop,
+    isNoTextOcrPage,
     selectNextGeminiModel,
     runSingleBatch,
     runGeminiRequestsWithRecoveryTransport,

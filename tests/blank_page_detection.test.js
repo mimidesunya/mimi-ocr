@@ -20,6 +20,10 @@ const {
     selectNextGeminiModel,
     runSingleBatch,
     recoverPagesFromTrustedEmbeddedText,
+    getOcrPrompt,
+    isRecitationStop,
+    isNoTextOcrPage,
+    readRecordedTotalPages,
 } = require('../dist/src/lib/ai_ocr.js');
 const {
     normalizeModelPriority,
@@ -145,6 +149,53 @@ test('partial Gemini OCR keeps useful pages and isolates an omitted page for ret
     assert.match(pageMap.get(1), /領収書の本文/);
     assert.equal(pageMap.has(2), false);
     assert.equal(emptyResponseCounts.get(2), 2);
+});
+
+test('a page the AI marks as having no text is resolved instead of retried as empty', () => {
+    const pageMap = new Map();
+    const emptyResponseCounts = new Map();
+    const text = [
+        '### -- Begin Page 1 --',
+        '(--! 文字なし)',
+        '### -- End (Printed Page 35) --',
+    ].join('\n');
+
+    const result = applyOcrBatchTextResult(text, [36], pageMap, emptyResponseCounts);
+
+    assert.deepEqual(result.usefulPages, [36]);
+    assert.deepEqual(result.emptyPages, []);
+    assert.deepEqual(result.unresolvedPages, []);
+    assert.equal(isNoTextOcrPage(pageMap.get(36)), true);
+    assert.match(pageMap.get(36), /Printed Page 35/);
+    assert.equal(isNoTextOcrPage('### -- Begin Page 1 --\n\n本文\n\n### -- End --'), false);
+    assert.equal(isNoTextOcrPage('### -- Begin Page 1 --\n\n### -- End --'), false);
+    assert.match(getOcrPrompt(4), /\(--! 文字なし\)/);
+});
+
+test('RECITATION stops are recognised and never counted as blank evidence', () => {
+    const recitation = { candidates: [{ finishReason: 'RECITATION', content: { parts: [] } }] };
+    assert.equal(isRecitationStop(recitation), true);
+    assert.equal(isRecitationStop({ candidates: [{ finishReason: 'STOP' }] }), false);
+    assert.equal(isRecitationStop(null), false);
+
+    const pageMap = new Map();
+    const emptyResponseCounts = new Map();
+    const result = applyOcrBatchTextResult('', [35], pageMap, emptyResponseCounts, { countEmpty: false });
+    assert.deepEqual(result.unresolvedPages, [35]);
+    assert.equal(emptyResponseCounts.has(35), false);
+});
+
+test('retry budget can be extended for a single request', () => {
+    const retryBudget = createIndependentRetryBudget(3);
+    for (let i = 0; i < 3; i++) retryBudget.begin(7);
+    assert.equal(retryBudget.canRetry(7), false);
+
+    retryBudget.extend(7);
+    assert.equal(retryBudget.limit(7), 4);
+    assert.equal(retryBudget.canRetry(7), true);
+    retryBudget.begin(7);
+    assert.equal(retryBudget.canRetry(7), false);
+    assert.equal(retryBudget.limit(8), 3);
 });
 
 test('split single-page recovery gets a full retry budget after parent exhaustion', () => {
@@ -485,6 +536,45 @@ test('embedded-text recovery cannot cascade through consecutive unresolved pages
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
+});
+
+test('resume is refused when pages were added or removed after the intermediate file was written', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-ocr-stale-resume-test-'));
+    const pdfPath = path.join(tempDir, 'edited.pdf');
+    const errorPath = path.join(tempDir, 'edited_ERROR_paged.md');
+    const normalPath = path.join(tempDir, 'edited_paged.md');
+    try {
+        // 3ページだった PDF から1ページ抜いた状態。残りは白紙なので AI へは何も送らない。
+        const pdf = await PDFDocument.create();
+        pdf.addPage([400, 600]);
+        pdf.addPage([400, 600]);
+        fs.writeFileSync(pdfPath, await pdf.save());
+        const settings = JSON.stringify({ tool: 'mimi-ocr', settings: { pages: { start: 1, end: 3, total: 3 }, hasError: true } }, null, 2)
+            .replace(/--/g, '\\u002d\\u002d');
+        fs.writeFileSync(errorPath, [
+            '### -- Begin Page 1 --\n\n削除前の1ページ目\n\n### -- End --',
+            '### -- Begin Page 2 --\n\n[ERROR: OCR Failed for page 2]\n\n',
+            '### -- Begin Page 3 --\n\n削除前の3ページ目\n\n### -- End --',
+            `<!-- mimi-ocr-settings\n${settings}\n-->`
+        ].join('\n\n'));
+        assert.equal(readRecordedTotalPages(fs.readFileSync(errorPath, 'utf8')), 3);
+
+        await pdfToText(pdfPath, 2, 1, null, '', 'gemini', 'batch');
+
+        const result = fs.readFileSync(normalPath, 'utf8');
+        assert.doesNotMatch(result, /削除前/);
+        assert.equal(fs.existsSync(errorPath), false);
+        const stale = fs.readdirSync(tempDir).filter(name => /^edited_ERROR_paged\.stale-\d{8}-\d{6}\.md$/.test(name));
+        assert.equal(stale.length, 1);
+        assert.match(fs.readFileSync(path.join(tempDir, stale[0]), 'utf8'), /削除前の3ページ目/);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('recorded page count is unknown for intermediate files without page metadata', () => {
+    assert.equal(readRecordedTotalPages('### -- Begin Page 1 --\n\n本文\n\n<!-- mimi-ocr-settings {"hasError":true} -->'), null);
+    assert.equal(readRecordedTotalPages('### -- Begin Page 1 --\n\n本文'), null);
 });
 
 test('resume locally recovers a trusted embedded-text page before creating an AI request', async () => {

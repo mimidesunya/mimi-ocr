@@ -61,6 +61,7 @@ images/files and number the pages sequentially from 1.
    - **Corrections**: Fix obvious OCR errors (0 vs O). Keep original typos with `(-- as is)`.
    - **Tables**: ALWAYS transcribe a ruled or statistical table as a Markdown table. NEVER replace a table with a description, a summary, or a note such as `(--! A table showing ...)`, and never drop rows or columns because the table is long or dense. Output every row, including header rows, subtotal/total rows (小計/合計) and empty cells (leave such a cell empty). Transcribe the numerals exactly as printed. When a vertically written table puts one record in one column, transpose it so that one Markdown row is one record, and read the records from right to left.
    - **Visuals**: If there are photos or diagrams, provide an explanation for them in Japanese formatted as `(--! Explanation)`. This applies to photographs, illustrations and figures only; never use it in place of a table.
+   - **Pages Without Text**: If a page has no readable text of its own (a blank page, the back of a sheet where only text bleeding through from the reverse side is faintly visible, an envelope back, a page with only ruled lines or a frame), output `(--! 文字なし)` as its only content between the markers. Never transcribe text bleeding through from the reverse side.
    - **Exclusions**: Omit printed page numbers from body.
      - **Redactions**: Replace blacked-out or redacted parts with "■".
      - **Margins**:

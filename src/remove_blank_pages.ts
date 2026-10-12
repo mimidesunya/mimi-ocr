@@ -61,6 +61,8 @@ function analyzePages(content: string, threshold: number): PageInfo[] {
             .replace(/### -- Begin Page \d+.*? --/g, '')
             .replace(/### -- End.*? --/g, '')
             .replace(/\[ERROR: OCR Failed.*?\]/g, '')
+            // AI が文字の無いページに書く注記。裏写りだけの面なども白紙として扱う。
+            .replace(/\(--!\s*文字なし\s*\)/g, '')
             .trim();
 
         const isBlank = bodyText.length <= threshold;
