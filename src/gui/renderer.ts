@@ -144,7 +144,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         '出力は、ふつうの文章なら「一般」、裁判資料の形に寄せるなら「法匪」を選びます。',
                         'OCRは、既定では「ndlocr+AI」を使います。テキスト主体のPDFでは「AIのみ」も選べます。',
                         'OCRモデルのコンボボックスで、Gemini、Claude、OpenAIの設定済みモデルを選びます。',
-                        'バッチは大量ページ向けです。止まりやすいときは「同期」に戻します。'
+                        'バッチは大量ページ向けです。止まりやすいときは「同期」に戻します。',
+                        '「1回のページ数」は、PDFを何ページずつAIへ送るかです。画像・Word・PowerPointには効きません。'
                     ]
                 },
                 {
@@ -173,7 +174,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         '音声モデルのコンボボックスで、Gemini、OpenAI、Reazon K2、VibeVoiceを選びます。',
                         '出力は、ふつうの議事録なら「一般」、反訳書風にしたいなら「法匪」を選びます。',
                         '「Chat APIで全体補正」をOnにすると、書き起こし完了後に全文の文脈を確認し、話者名・誤字・句読点をまとめて補正します。補正モデルは音声モデルとは別のコンボボックスで選べます。',
-                        '無音カットをOnにすると、長い沈黙を先に短くしてからAIへ送ります。'
+                        '無音カットをOnにすると、長い沈黙を先に短くしてからAIへ送ります。',
+                        '「同時処理数」は、同時に処理する音声ファイルの数です。OpenAI以外は1件ずつ処理します。'
                     ]
                 },
                 {
@@ -1138,7 +1140,7 @@ document.addEventListener('DOMContentLoaded', () => {
         audioChatModelSelect.disabled = !audio || !currentAudioPostprocess;
         labelAudioChatModel.classList.toggle('disabled', !audio || !currentAudioPostprocess);
 
-        // AI / モード / PDFテキスト / バッチサイズ
+        // AI / モード / PDFテキスト / 1回のページ数・同時処理数（--batch_size）
         ocrModelSelect.disabled = !aiEnabled;
         labelAi.classList.toggle('disabled', !aiEnabled);
         setGroupDisabled(toggleMode, labelMode, modeBtns, !modeEnabled);
@@ -1148,6 +1150,13 @@ document.addEventListener('DOMContentLoaded', () => {
         setGroupDisabled(toggleSilenceTrim, labelSilenceTrim, silenceTrimBtns, !audio);
         batchSizeInput.disabled = !batchEnabled;
         labelBatch.classList.toggle('disabled', !batchEnabled);
+        // 同じ --batch_size でも、OCRと音声認識で意味が違う
+        labelBatch.textContent = audio ? '同時処理数:' : '1回のページ数:';
+        const batchTitle = audio
+            ? '同時に処理する音声ファイルの数です。OpenAI以外は1件ずつ処理します。'
+            : 'PDFを何ページずつAIへ送るかです。画像・Word・PowerPointには効きません。';
+        labelBatch.title = batchTitle;
+        batchSizeInput.title = batchTitle;
 
         if (ocr && modeEnabled) applyModeConstraint();
 

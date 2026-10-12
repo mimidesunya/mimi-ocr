@@ -572,7 +572,7 @@ ipcMain.handle('execute-script', async (event, {
         }
         scriptArgs.push('--mode', processMode || 'sync');
 
-        // バッチサイズ
+        // 1回のページ数（--batch_size）
         const bs = parseInt(batchSize, 10);
         if (!isNaN(bs) && bs > 0) {
             scriptArgs.push('--batch_size', String(bs));
@@ -649,7 +649,7 @@ ipcMain.handle('execute-script', async (event, {
         const postprocessLabel = resolvedAudioOptions.postprocessAi === 'off'
             ? ' / Chat API全体補正: Off'
             : ` / Chat API全体補正: On (${postprocessProvider}${resolvedAudioOptions.postprocessModel ? ` / ${resolvedAudioOptions.postprocessModel}` : ''})`;
-        const modeLabel = processMode === 'batch' ? `バッチ (サイズ ${batchSize || 4})` : '同期';
+        const modeLabel = processMode === 'batch' ? `バッチ (同時処理数 ${batchSize || 4})` : '同期';
         const renameLabel = autoRename === true ? 'On' : 'Off';
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
         const trimLabel = silenceTrim === true ? 'On' : 'Off';

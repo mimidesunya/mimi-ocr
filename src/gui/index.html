@@ -265,7 +265,7 @@
             pointer-events: none;
         }
 
-        /* バッチサイズ入力 */
+        /* 1回のページ数・同時処理数の入力 */
         .batch-size-input {
             width: 48px;
             padding: 3px 6px;
@@ -887,7 +887,7 @@
                 </div>
             </div>
 
-            <!-- PDFテキスト優先 / バッチサイズ -->
+            <!-- PDFテキスト優先 / 1回のページ数・同時処理数 -->
             <div class="selector-row">
                 <div class="selector-group">
                     <span class="option-label" id="labelPdfText">PDFテキスト:</span>
@@ -897,7 +897,7 @@
                     </div>
                 </div>
                 <div class="selector-group">
-                    <span class="option-label" id="labelBatch">バッチサイズ:</span>
+                    <span class="option-label" id="labelBatch">1回のページ数:</span>
                     <input type="number" id="batchSizeInput" class="batch-size-input" value="4" min="1" max="20">
                 </div>
             </div>
