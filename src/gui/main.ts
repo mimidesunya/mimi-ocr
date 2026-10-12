@@ -165,12 +165,17 @@ function hasOpenaiApiKey() {
 function getRuntimeModelOptions() {
     const config = loadConfig() || {};
     const providers = config.providers || {};
+    const defaultProviders = getDefaultConfig()?.providers || {};
     const collectChat = (providerName) => {
         const provider = providers[providerName] || {};
+        const defaults = defaultProviders[providerName] || {};
+        // 設定したモデルを先に並べ、app.defaults.json の候補（新しいモデルを含む）も選べるようにする
         return Array.from(new Set([
             ...(Array.isArray(provider.chatModels) ? provider.chatModels : []),
             provider.chatModel,
             getProviderModel(providerName, 'chat'),
+            ...(Array.isArray(defaults.chatModels) ? defaults.chatModels : []),
+            defaults.chatModel,
         ].map(value => String(value || '').trim()).filter(Boolean)));
     };
     return {
