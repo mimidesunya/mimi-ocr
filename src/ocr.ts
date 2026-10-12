@@ -46,6 +46,7 @@ const path = require('path');
 const { pdfToText, docToText, docxToText, odtToText, pptxToText, imageToText, getOcrPrompt } = require('./lib/ai_ocr');
 const { maybeAutoRenameDocument } = require('./lib/auto_rename');
 const { loadConfig, getProviderModel, setProviderModelOverride } = require('./lib/gemini_client');
+const { getBatchFileLimits, getFileSize, runWithinBudget } = require('./lib/file_scheduler');
 const {
     parsePositiveInt,
     normalizeTarget,
@@ -300,15 +301,17 @@ async function main() {
                 }
             }
         } else {
-            console.log(`[情報] ${files.length} 個のファイルを並列処理します`);
-            await Promise.all(files.map(async fp => {
+            // 全件を一度に始めると、全ファイルの base64 がヒープに同時に載ってメモリ不足で落ちる。
+            const limits = getBatchFileLimits();
+            console.log(`[情報] ${files.length} 個のファイルを並列処理します（同時に最大 ${limits.maxConcurrent} 件、処理中のファイルの合計 ${Math.round(limits.budgetBytes / 1024 / 1024)} MB まで）`);
+            await runWithinBudget(files, limits, getFileSize, async fp => {
                 try {
                     if (!await processFile(fp)) failedCount++;
                 } catch (err) {
                     console.error(`[エラー] ${path.basename(fp)}: ${err.message}`);
                     failedCount++;
                 }
-            }));
+            });
         }
     };
 
