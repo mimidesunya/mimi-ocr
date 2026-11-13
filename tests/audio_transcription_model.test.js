@@ -29,7 +29,8 @@ const {
     parseGeminiTranscribeResponse,
     shouldSplitGeminiAudio,
     buildGeminiChunkRanges,
-    geminiChunkOwnedItems,
+    chooseGeminiChunkCutMs,
+    stitchGeminiTranscribeChunks,
     requiresGeminiTranscribeConversion,
     namespaceGeminiChunkSpeakers,
     transcribeWithGemini,
@@ -369,14 +370,6 @@ test('long Gemini transcription uses 10-minute owned ranges with five-second con
     assert.deepEqual(ranges.at(-1), { startSec: 4795, durationSec: 132.738, contentStartSec: 4800, contentEndSec: 4927.738 });
     assert.ok(ranges.every(range => range.contentEndSec - range.contentStartSec <= 600));
     assert.ok(ranges.every(range => range.durationSec <= 610));
-
-    const overlapItems = [
-        { speaker: '話者1', time: '00:09:59.900', startMs: 599900, text: '前区間' },
-        { speaker: '話者1', time: '00:10:00.000', startMs: 600000, text: '次区間' },
-        { speaker: '話者1', time: '00:10:00.100', startMs: 600100, text: '次区間続き' },
-    ];
-    assert.deepEqual(geminiChunkOwnedItems(overlapItems, ranges[0], false).map(item => item.text), ['前区間']);
-    assert.deepEqual(geminiChunkOwnedItems(overlapItems, ranges[1], false).map(item => item.text), ['次区間', '次区間続き']);
 });
 
 function interactionWordInfo(source, text, speaker, startOffset, endOffset) {
@@ -546,6 +539,74 @@ test('Gemini parser reports a large timestamp rollback before stable sorting hid
         '00:00:40.000',
         '00:01:40.000',
     ]);
+});
+
+function chunkTranscript(text, words) {
+    return parseGeminiTranscribeResponse(geminiInteractionResponse(text, words.map(([word, start, end]) => (
+        interactionWordInfo(text, word, 'spk_1', `${start}s`, `${end}s`)
+    )))).items;
+}
+
+const seamChunks = buildGeminiChunkRanges(1200, 10 * 60, 10);
+
+test('an utterance crossing a chunk seam is split at a pause both chunks share', () => {
+    // Chunk 1 hears 0-610s, chunk 2 hears 590-1200s (chunk-relative times below).
+    const first = chunkTranscript('長い文の前半で後半ですまだ続きます', [
+        ['長い文の', 595, 599], ['前半で', 599, 600.2], ['後半です', 600.8, 604], ['まだ続きます', 604, 609.9],
+    ]);
+    const second = chunkTranscript('長い文の前半で後半ですまだ続きます。次の文です。', [
+        ['長い文の', 5, 9], ['前半で', 9, 10.2], ['後半です', 10.8, 14], ['まだ続きます', 14, 22], ['次の文です', 23, 25],
+    ]);
+    const stitched = stitchGeminiTranscribeChunks([
+        { chunk: seamChunks[0], items: first },
+        { chunk: seamChunks[1], items: second },
+    ]);
+
+    assert.deepEqual(stitched.seams, [{ cutMs: 600500, pauseMs: 600 }]);
+    assert.deepEqual(stitched.items.map(item => [item.speaker, item.time, item.endTime, item.text]), [
+        ['話者1（区間1）', '00:09:55.000', '00:10:00.200', '長い文の前半で'],
+        ['話者1（区間2）', '00:10:00.800', '00:10:12.000', '後半ですまだ続きます。'],
+        ['話者1（区間2）', '00:10:13.000', '00:10:15.000', '次の文です。'],
+    ]);
+    assert.ok(stitched.items.every(item => !('geminiWords' in { ...item })));
+});
+
+test('an utterance running past the end of the previous chunk is taken whole from the next chunk', () => {
+    // Before the fix this sentence was cut at 610s in chunk 1 and dropped from chunk 2
+    // because it started before the nominal 600s boundary.
+    const first = chunkTranscript('前の話です。国連の人種差別撤廃委員会も懸念を表明', [
+        ['前の話です', 580, 585], ['国連の', 596, 597], ['人種差別撤廃委員会も', 597, 603], ['懸念を', 603, 606], ['表明', 606, 609.8],
+    ]);
+    const second = chunkTranscript('国連の人種差別撤廃委員会も懸念を表明しています。続きです。', [
+        ['国連の', 6, 7], ['人種差別撤廃委員会も', 7, 13], ['懸念を', 13, 16], ['表明しています', 16, 21], ['続きです', 22, 23],
+    ]);
+    const stitched = stitchGeminiTranscribeChunks([
+        { chunk: seamChunks[0], items: first },
+        { chunk: seamChunks[1], items: second },
+    ]);
+
+    assert.deepEqual(stitched.seams, [{ cutMs: 593500, pauseMs: 5000 }]);
+    assert.deepEqual(stitched.items.map(item => [item.speaker, item.time, item.text]), [
+        ['話者1（区間1）', '00:09:40.000', '前の話です。'],
+        ['話者1（区間2）', '00:09:56.000', '国連の人種差別撤廃委員会も懸念を表明しています。'],
+        ['話者1（区間2）', '00:10:12.000', '続きです。'],
+    ]);
+});
+
+test('without any shared pause the seam falls back to the nominal boundary by word start', () => {
+    const first = chunkTranscript('途切れない話がずっと続く', [
+        ['途切れない', 585, 595], ['話が', 595, 600], ['ずっと', 600, 605], ['続く', 605, 610],
+    ]);
+    const second = chunkTranscript('途切れない話がずっと続く。', [
+        ['途切れない', -5, 5], ['話が', 5, 10], ['ずっと', 10, 15], ['続く', 15, 20],
+    ]);
+    const seam = chooseGeminiChunkCutMs({ chunk: seamChunks[0], items: first }, { chunk: seamChunks[1], items: second });
+    assert.deepEqual(seam, { cutMs: 600000, pauseMs: 0 });
+    const stitched = stitchGeminiTranscribeChunks([
+        { chunk: seamChunks[0], items: first },
+        { chunk: seamChunks[1], items: second },
+    ]);
+    assert.deepEqual(stitched.items.map(item => item.text), ['途切れない話が', 'ずっと続く。']);
 });
 
 test('one acoustic speaker ID keeps one fixed name across the whole ASR section', () => {

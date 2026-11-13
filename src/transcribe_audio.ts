@@ -57,7 +57,14 @@ const GEMINI_CHUNK_MIN_DURATION_SEC = 2 * 60;
 // recordings have produced successful responses with a large middle section
 // omitted at that limit. Use shorter owned ranges with context padding.
 const GEMINI_TRANSCRIBE_MAX_DURATION_SEC = 10 * 60;
-const GEMINI_TRANSCRIBE_CHUNK_PADDING_SEC = 5;
+// Neighbouring chunks share 2 x padding seconds of audio. The seam is cut at a
+// pause that both chunks agree on inside that overlap (word timestamps), so an
+// utterance crossing the nominal 10-minute mark is split between the chunks
+// instead of being truncated in one and dropped from the other.
+const GEMINI_TRANSCRIBE_CHUNK_PADDING_SEC = 10;
+// Words this close to a chunk's own audio edge may be cut mid-sound.
+const GEMINI_TRANSCRIBE_SEAM_EDGE_GUARD_MS = 1000;
+const GEMINI_TRANSCRIBE_SEAM_MIN_PAUSE_MS = 150;
 const GEMINI_TRANSCRIBE_MAX_TIMESTAMP_REGRESSION_MS = 30 * 1000;
 // A rollback is not deterministic for the same audio (a one-off response carried a
 // word ~99000s ahead), so resend before giving up.
@@ -712,17 +719,141 @@ function buildGeminiChunkRanges(durationSec: number, coreDurationSec: number, pa
     return ranges;
 }
 
-function geminiChunkOwnedItems(items: TranscriptItem[], chunk: any, isLastChunk: boolean) {
-    const contentStartMs = Math.round(Number(chunk.contentStartSec ?? chunk.startSec ?? 0) * 1000);
-    const contentEndMs = Math.round(Number(
-        chunk.contentEndSec
-        ?? (Number(chunk.startSec || 0) + Number(chunk.durationSec || 0)),
-    ) * 1000);
-    return items.filter(item => {
-        const startMs = transcriptItemStartMs(item);
-        if (!Number.isFinite(startMs)) return false;
-        return startMs >= contentStartMs && (isLastChunk ? startMs <= contentEndMs : startMs < contentEndMs);
+type GeminiItemWord = { text: string; startMs: number; endMs: number };
+
+// The word list stays off the enumerable fields so it never reaches Markdown,
+// AI prompts or object spreads; it is only used to cut chunk seams.
+function attachGeminiItemWords<T extends object>(item: T, words: GeminiItemWord[]) {
+    Object.defineProperty(item, 'geminiWords', { value: words, enumerable: false, configurable: true, writable: true });
+    return item;
+}
+
+function geminiItemWords(item: any): GeminiItemWord[] {
+    return Array.isArray(item?.geminiWords) ? item.geminiWords : [];
+}
+
+// Absolute word times for one utterance. Words without their own timestamp
+// inherit the previous word's end (or the utterance start).
+function geminiItemWordTimeline(item: TranscriptItem, offsetMs = 0) {
+    const words = geminiItemWords(item);
+    if (words.length === 0) return null;
+    const itemStartMs = transcriptItemStartMs(item);
+    let previousEndMs = Number.isFinite(itemStartMs) ? itemStartMs : NaN;
+    return words.map(word => {
+        const startMs = Number.isFinite(word.startMs) ? word.startMs : previousEndMs;
+        const endMs = Number.isFinite(word.endMs) ? Math.max(word.endMs, startMs) : startMs;
+        if (Number.isFinite(endMs)) previousEndMs = endMs;
+        return { text: word.text, startMs: startMs + offsetMs, endMs: endMs + offsetMs };
     });
+}
+
+function geminiItemSpans(item: TranscriptItem, offsetMs: number) {
+    const timeline = geminiItemWordTimeline(item, offsetMs);
+    if (timeline) return timeline;
+    const startMs = transcriptItemStartMs(item) + offsetMs;
+    const endMs = Number.isFinite(item.endMs) ? Number(item.endMs) + offsetMs : startMs;
+    return [{ text: item.text, startMs, endMs }];
+}
+
+// Pick the seam between two overlapping chunks: a stretch of the shared audio
+// where neither chunk has a word, preferring one at least MIN_PAUSE long and
+// closest to the nominal boundary. Times are absolute milliseconds.
+function chooseGeminiChunkCutMs(
+    previous: { chunk: any; items: TranscriptItem[] },
+    next: { chunk: any; items: TranscriptItem[] },
+) {
+    const nominalMs = Math.round(Number(next.chunk.contentStartSec ?? previous.chunk.contentEndSec ?? next.chunk.startSec ?? 0) * 1000);
+    const previousOffsetMs = Math.round(Number(previous.chunk.startSec || 0) * 1000);
+    const nextOffsetMs = Math.round(Number(next.chunk.startSec || 0) * 1000);
+    const previousAudioEndMs = previousOffsetMs + Math.round(Number(previous.chunk.durationSec || 0) * 1000);
+    const windowStartMs = nextOffsetMs + GEMINI_TRANSCRIBE_SEAM_EDGE_GUARD_MS;
+    const windowEndMs = previousAudioEndMs - GEMINI_TRANSCRIBE_SEAM_EDGE_GUARD_MS;
+    if (!(windowEndMs > windowStartMs)) return { cutMs: nominalMs, pauseMs: 0 };
+
+    const spans: Array<[number, number]> = [];
+    const collect = (items: TranscriptItem[], offsetMs: number) => {
+        for (const item of items) {
+            for (const span of geminiItemSpans(item, offsetMs)) {
+                if (!Number.isFinite(span.startMs) || !Number.isFinite(span.endMs)) continue;
+                if (span.endMs < windowStartMs || span.startMs > windowEndMs) continue;
+                spans.push([Math.max(span.startMs, windowStartMs), Math.min(span.endMs, windowEndMs)]);
+            }
+        }
+    };
+    collect(previous.items, previousOffsetMs);
+    collect(next.items, nextOffsetMs);
+    spans.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+
+    const gaps: Array<[number, number]> = [];
+    let cursorMs = windowStartMs;
+    for (const [startMs, endMs] of spans) {
+        if (startMs > cursorMs) gaps.push([cursorMs, startMs]);
+        cursorMs = Math.max(cursorMs, endMs);
+    }
+    if (windowEndMs > cursorMs) gaps.push([cursorMs, windowEndMs]);
+    if (gaps.length === 0) return { cutMs: nominalMs, pauseMs: 0 };
+
+    const distance = ([startMs, endMs]: [number, number]) => (
+        nominalMs < startMs ? startMs - nominalMs : nominalMs > endMs ? nominalMs - endMs : 0
+    );
+    const pauses = gaps.filter(([startMs, endMs]) => endMs - startMs >= GEMINI_TRANSCRIBE_SEAM_MIN_PAUSE_MS);
+    const chosen = pauses.length > 0
+        ? pauses.reduce((best, gap) => (distance(gap) < distance(best) ? gap : best))
+        : gaps.reduce((best, gap) => (gap[1] - gap[0] > best[1] - best[0] ? gap : best));
+    const cutMs = distance(chosen) === 0 ? nominalMs : Math.round((chosen[0] + chosen[1]) / 2);
+    return { cutMs, pauseMs: chosen[1] - chosen[0] };
+}
+
+// Keep the words of one chunk whose start falls in [cutStartMs, cutEndMs).
+// An utterance crossing a cut keeps only its own side's words.
+function trimGeminiChunkItems(items: TranscriptItem[], offsetMs: number, cutStartMs: number, cutEndMs: number) {
+    const kept: TranscriptItem[] = [];
+    const inside = (startMs: number) => startMs >= cutStartMs && startMs < cutEndMs;
+    for (const item of items) {
+        const timeline = geminiItemWordTimeline(item, offsetMs);
+        if (!timeline) {
+            if (inside(transcriptItemStartMs(item) + offsetMs)) kept.push(item);
+            continue;
+        }
+        const keep = timeline.map(word => inside(word.startMs));
+        if (keep.every(Boolean)) {
+            kept.push(item);
+            continue;
+        }
+        if (!keep.some(Boolean)) continue;
+        const words = geminiItemWords(item).filter((_, index) => keep[index]);
+        const times = timeline.filter((_, index) => keep[index]);
+        const text = joinGeminiTranscribedWords(words);
+        if (!text) continue;
+        const startMs = times[0].startMs - offsetMs;
+        const endMs = Math.max(...times.map(word => word.endMs)) - offsetMs;
+        kept.push(attachGeminiItemWords({
+            ...item,
+            startMs,
+            endMs,
+            time: formatTranscriptTimeMs(startMs),
+            endTime: formatTranscriptTimeMs(endMs),
+            text,
+        }, words));
+    }
+    return kept;
+}
+
+// Join per-chunk Gemini Transcribe results (chunk-relative times) into one
+// absolute timeline, cutting each overlap at a shared pause.
+function stitchGeminiTranscribeChunks(chunkResults: Array<{ chunk: any; items: TranscriptItem[] }>) {
+    const seams = [];
+    for (let index = 1; index < chunkResults.length; index++) {
+        seams.push(chooseGeminiChunkCutMs(chunkResults[index - 1], chunkResults[index]));
+    }
+    const cuts = [Number.NEGATIVE_INFINITY, ...seams.map(seam => seam.cutMs), Number.POSITIVE_INFINITY];
+    const items: TranscriptItem[] = [];
+    chunkResults.forEach((entry, index) => {
+        const offsetSec = Number(entry.chunk.startSec || 0);
+        const trimmed = trimGeminiChunkItems(entry.items, Math.round(offsetSec * 1000), cuts[index], cuts[index + 1]);
+        items.push(...offsetTranscriptItems(namespaceGeminiChunkSpeakers(trimmed, index + 1), offsetSec));
+    });
+    return { items, seams };
 }
 
 async function createGeminiAudioChunks(
@@ -1241,6 +1372,9 @@ function summarizeAudioChunking(preprocess: Record<string, any>) {
             targetBytes: preprocess.geminiChunkSplitBySize === false ? undefined : GEMINI_CHUNK_TARGET_BYTES,
             maxDurationSec: Number(preprocess.geminiChunkMaxDurationSec || GEMINI_CHUNK_MAX_DURATION_SEC),
             contextPaddingSec: Number(preprocess.geminiChunkPaddingSec || 0),
+            ...(Array.isArray(preprocess.geminiChunkSeams) && preprocess.geminiChunkSeams.length > 0
+                ? { seamCut: 'shared-pause', seams: preprocess.geminiChunkSeams }
+                : {}),
             chunks: chunks.map((chunk: any) => ({
                 startSec: Number(chunk.startSec.toFixed(3)),
                 durationSec: Number(chunk.durationSec.toFixed(3)),
@@ -3216,7 +3350,7 @@ function parseGeminiTranscribeResponse(response: any) {
                     const safeEndMs = Number.isFinite(currentEndMs)
                         ? Number.isFinite(currentStartMs) ? Math.max(currentStartMs, currentEndMs) : currentEndMs
                         : NaN;
-                    items.push({
+                    items.push(attachGeminiItemWords({
                         speaker: currentSpeaker || '話者不明',
                         ...(currentSpeakerId ? { speakerId: currentSpeakerId } : {}),
                         ...(Number.isFinite(currentStartMs) ? { startMs: currentStartMs } : {}),
@@ -3224,7 +3358,7 @@ function parseGeminiTranscribeResponse(response: any) {
                         time: Number.isFinite(currentStartMs) ? formatTranscriptTimeMs(currentStartMs) : '',
                         ...(Number.isFinite(safeEndMs) ? { endTime: formatTranscriptTimeMs(safeEndMs) } : {}),
                         text,
-                    });
+                    }, currentWords));
                 }
                 currentWords = [];
                 currentSpeaker = '';
@@ -3265,7 +3399,7 @@ function parseGeminiTranscribeResponse(response: any) {
                     previousEndMs = explicitEndMs;
                 }
                 if (explicitSpeakerId) previousSpeakerId = explicitSpeakerId;
-                currentWords.push({ text: word.text });
+                currentWords.push({ text: word.text, startMs: explicitStartMs, endMs: explicitEndMs });
                 if (isGeminiSentenceEnd(word.text)) flush();
             }
             flush();
@@ -3500,7 +3634,7 @@ async function transcribePreparedAudio(preprocess: Record<string, any>, options:
 
         console.log(`[情報] 音声をGemini用に ${chunkSet.chunks.length} チャンクへ分割しました`);
         if (dedicatedGeminiTranscription) {
-            console.warn('[警告] 10分を超える音声は欠落防止のため前後5秒を重ねて分割し、話者ラベルへ区間番号を付けて出力します。');
+            console.warn(`[警告] 10分を超える音声は前後${GEMINI_TRANSCRIBE_CHUNK_PADDING_SEC}秒を重ねて分割し、重なりの中の間（ポーズ）で切り継ぎます。話者ラベルには区間番号を付けて出力します。`);
         }
         preprocess.geminiChunkMaxDurationSec = maxDurationSec;
         preprocess.geminiChunkPaddingSec = dedicatedGeminiTranscription ? GEMINI_TRANSCRIBE_CHUNK_PADDING_SEC : 0;
@@ -3513,6 +3647,7 @@ async function transcribePreparedAudio(preprocess: Record<string, any>, options:
             bytes: chunk.bytes,
         }));
         const allItems: TranscriptItem[] = [];
+        const chunkResults: Array<{ chunk: any; items: TranscriptItem[] }> = [];
         let overview: Record<string, string> = {};
 
         try {
@@ -3521,19 +3656,32 @@ async function transcribePreparedAudio(preprocess: Record<string, any>, options:
                 const chunkEndSec = chunk.startSec + chunk.durationSec;
                 const contentStartSec = Number(chunk.contentStartSec ?? chunk.startSec);
                 const contentEndSec = Number(chunk.contentEndSec ?? chunkEndSec);
-                console.log(`[情報] 音声チャンク ${i + 1}/${chunkSet.chunks.length}: 入力 ${formatTimestamp(chunk.startSec, true)}-${formatTimestamp(chunkEndSec, true)} / 採用 ${formatTimestamp(contentStartSec, true)}-${formatTimestamp(contentEndSec, true)} (${(chunk.bytes / 1024 / 1024).toFixed(2)}MB)`);
+                console.log(`[情報] 音声チャンク ${i + 1}/${chunkSet.chunks.length}: 入力 ${formatTimestamp(chunk.startSec, true)}-${formatTimestamp(chunkEndSec, true)} / 採用(目安) ${formatTimestamp(contentStartSec, true)}-${formatTimestamp(contentEndSec, true)} (${(chunk.bytes / 1024 / 1024).toFixed(2)}MB)`);
                 const result = await transcribeAudio(chunk.audioPath, options);
-                const chunkItems = dedicatedGeminiTranscription
-                    ? namespaceGeminiChunkSpeakers(result.items, i + 1)
-                    : result.items;
-                const offsetItems = offsetTranscriptItems(chunkItems, chunk.startSec);
-                allItems.push(...(dedicatedGeminiTranscription
-                    ? geminiChunkOwnedItems(offsetItems, chunk, i === chunkSet.chunks.length - 1)
-                    : offsetItems));
+                if (dedicatedGeminiTranscription) {
+                    chunkResults.push({ chunk, items: result.items });
+                } else {
+                    allItems.push(...offsetTranscriptItems(result.items, chunk.startSec));
+                }
                 overview = mergeOverview(overview, result.overview || {});
             }
         } finally {
             chunkSet.cleanup?.();
+        }
+
+        if (dedicatedGeminiTranscription) {
+            const stitched = stitchGeminiTranscribeChunks(chunkResults);
+            stitched.seams.forEach((seam, index) => {
+                const how = seam.pauseMs >= GEMINI_TRANSCRIBE_SEAM_MIN_PAUSE_MS
+                    ? `間 ${(seam.pauseMs / 1000).toFixed(2)} 秒`
+                    : '間が見つからず語の開始時刻で分割';
+                console.log(`[情報] 継ぎ目 ${index + 1}/${stitched.seams.length}: ${formatTimestamp(seam.cutMs / 1000, true)} で切り継ぎました (${how})`);
+            });
+            preprocess.geminiChunkSeams = stitched.seams.map(seam => ({
+                cutSec: Number((seam.cutMs / 1000).toFixed(3)),
+                pauseSec: Number((seam.pauseMs / 1000).toFixed(3)),
+            }));
+            allItems.push(...stitched.items);
         }
 
         const rawResult = { items: allItems, overview };
@@ -3784,7 +3932,9 @@ module.exports = {
     getOriginalFilenameDate,
     createGeminiAudioChunks,
     buildGeminiChunkRanges,
-    geminiChunkOwnedItems,
+    chooseGeminiChunkCutMs,
+    trimGeminiChunkItems,
+    stitchGeminiTranscribeChunks,
     shouldSplitGeminiAudio,
     requiresGeminiTranscribeConversion,
     namespaceGeminiChunkSpeakers,
