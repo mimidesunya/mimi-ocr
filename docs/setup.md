@@ -6,7 +6,7 @@
 - 開発環境では Node.js と npm
 - Windows リリースパッケージ利用時は Node.js / npm 不要
 - `npm install` が通るローカルビルド環境（開発・リリース作成時）
-- `ndlocr-lite` を使う場合は Python 3.10 以上
+- `ndlocr-lite` を使う場合は Python 3.11 以上（ndlocr-lite 2.0.0 から）
 - macOS で無音カットや音声変換を使う場合は ffmpeg（例: `brew install ffmpeg`）
 - `bin/mimi-ocr.exe` を小さく作る場合は MinGW-w64 の `gcc` / `windres`
 - MinGW-w64 がない環境で `bin/mimi-ocr.exe` を作る場合は .NET 10 SDK

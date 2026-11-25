@@ -11,6 +11,10 @@ const FFMPEG_ZIP_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essent
 const FFMPEG_SHA_URL = `${FFMPEG_ZIP_URL}.sha256`;
 const NDLOCR_RELEASE_API_URL = 'https://api.github.com/repos/ndl-lab/ndlocr-lite/releases/latest';
 const NDLOCR_SOURCE_FALLBACK_URL = 'https://github.com/ndl-lab/ndlocr-lite/archive/refs/heads/master.zip';
+// 自動で取ってきた ndlocr-lite がこれより古ければ取り直す（2.0.0 でモデルのファイル名と依存が変わった）。
+const NDLOCR_MIN_VERSION = [2, 0, 0];
+// ndlocr-lite 2.0.0 の CLI は Python 3.11 以上（pyproject の requires-python、Pillow 13）。
+const NDLOCR_MIN_PYTHON = [3, 11];
 const REAZON_K2_PACKAGE_SPEC = 'git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/k2-asr';
 const VIBEASR_CPP_REPOSITORY = 'https://github.com/microsoft/VibeASR.cpp.git';
 const VIBEASR_CPP_REVISION = '5cbce71c65911a7e10639ac13b6ab6929e4c8f9e';
@@ -322,6 +326,53 @@ function probePythonCommand(command, argsPrefix = []) {
     return !result.error && result.status === 0;
 }
 
+function parseVersionNumbers(text) {
+    const match = String(text || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
+    if (!match) return null;
+    return [Number(match[1]), Number(match[2]), Number(match[3] || 0)];
+}
+
+function compareVersionNumbers(a, b) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        const diff = (a[i] || 0) - (b[i] || 0);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
+
+// 起動できなければ null。起動できれば [major, minor, patch]。
+function getPythonVersion(command, argsPrefix = []) {
+    ensureDir(getToolsRoot());
+    const result = spawnSync(command, [...argsPrefix, '--version'], {
+        cwd: getToolsRoot(),
+        encoding: 'utf-8',
+        windowsHide: true,
+        shell: false,
+    });
+    if (result.error || result.status !== 0) return null;
+    return parseVersionNumbers(`${result.stdout || ''} ${result.stderr || ''}`.replace(/^\D*/, ''));
+}
+
+// pyproject.toml の [project] の version。読めなければ null。
+function readNdlocrVersion(repoPath) {
+    try {
+        const text = fs.readFileSync(path.join(repoPath, 'pyproject.toml'), 'utf-8');
+        const match = text.match(/^\s*version\s*=\s*["']([^"']+)["']/m);
+        return match ? parseVersionNumbers(match[1]) : null;
+    } catch (_err) {
+        return null;
+    }
+}
+
+function isNdlocrOlderThanMinimum(repoPath) {
+    const version = readNdlocrVersion(repoPath);
+    return !version || compareVersionNumbers(version, NDLOCR_MIN_VERSION) < 0;
+}
+
+function fileSha256(filePath) {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
 function getWindowsPythonInstallCandidates() {
     if (process.platform !== 'win32') return [];
     const roots = [
@@ -346,12 +397,18 @@ function getWindowsPythonInstallCandidates() {
     return candidates.sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
-function resolveBasePythonCommand(configuredPython = '') {
+// minVersion を渡すと、それより古い Python は選ばない（[3, 11] など）。
+function resolveBasePythonCommand(configuredPython = '', minVersion = null) {
     ensureDir(getToolsRoot());
+    const isNewEnough = (version) => !minVersion || (version && compareVersionNumbers(version, minVersion) >= 0);
     const configured = String(configuredPython || '').trim();
     if (configured) {
-        if (!probePythonCommand(configured)) {
+        const version = getPythonVersion(configured);
+        if (!version) {
             throw new Error(`設定されたPythonを起動できません: ${configured}`);
+        }
+        if (!isNewEnough(version)) {
+            throw new Error(`設定されたPythonは ${version.join('.')} です。Python ${minVersion.join('.')} 以上を指定してください: ${configured}`);
         }
         return { command: configured, argsPrefix: [] };
     }
@@ -370,37 +427,49 @@ function resolveBasePythonCommand(configuredPython = '') {
     candidates.push({ command: 'python', argsPrefix: [] });
 
     for (const candidate of candidates) {
-        if (probePythonCommand(candidate.command, candidate.argsPrefix)) {
+        if (isNewEnough(getPythonVersion(candidate.command, candidate.argsPrefix))) {
             return candidate;
         }
     }
 
-    throw new Error('Python 3 が見つかりません。ndlocr-lite の自動セットアップには Python 3.10 以上が必要です。Windowsでは https://www.python.org/downloads/windows/ から Python をインストールするか、config.json の tools.ndlocrLite.pythonPath に Python のパスを指定してください。');
+    const required = minVersion ? `Python ${minVersion.join('.')} 以上` : 'Python 3';
+    throw new Error(`${required} が見つかりません。ndlocr-lite の自動セットアップには Python 3.11 以上が必要です。Windowsでは https://www.python.org/downloads/windows/ から Python をインストールするか、config.json の tools.ndlocrLite.pythonPath に Python のパスを指定してください。`);
 }
 
 function ensureNdlocrVenv(repoPath, basePython) {
     const venvDir = path.join(getToolsRoot(), 'ndlocr-lite-venv');
     const venvPython = getVenvPythonPath(venvDir);
+    // 入れた requirements.txt の sha256。ndlocr-lite を取り直して依存が変わったら入れ直す。
     const markerPath = path.join(venvDir, '.mimi-installed');
 
-    if (isExecutableFile(venvPython) && !probePythonCommand(venvPython)) {
-        console.warn('[tools] ndlocr-lite用のPython環境を起動できないため作り直します。');
-        fs.rmSync(venvDir, { recursive: true, force: true });
+    if (isExecutableFile(venvPython)) {
+        const version = getPythonVersion(venvPython);
+        if (!version) {
+            console.warn('[tools] ndlocr-lite用のPython環境を起動できないため作り直します。');
+            fs.rmSync(venvDir, { recursive: true, force: true });
+        } else if (compareVersionNumbers(version, NDLOCR_MIN_PYTHON) < 0) {
+            console.warn(`[tools] ndlocr-lite用のPython環境が Python ${version.join('.')} なので、${NDLOCR_MIN_PYTHON.join('.')} 以上で作り直します。`);
+            fs.rmSync(venvDir, { recursive: true, force: true });
+        }
     }
 
     if (!isExecutableFile(venvPython)) {
         console.log('[tools] ndlocr-lite用のPython環境を作ります。');
-        const python = resolveBasePythonCommand(basePython);
+        const python = resolveBasePythonCommand(basePython, NDLOCR_MIN_PYTHON);
         runChecked(python.command, [...python.argsPrefix, '-m', 'venv', venvDir], getToolsRoot());
     }
 
-    if (!fs.existsSync(markerPath)) {
-        const requirementsPath = path.join(repoPath, 'requirements.txt');
+    const requirementsPath = path.join(repoPath, 'requirements.txt');
+    const stamp = fs.existsSync(requirementsPath) ? `requirements-sha256:${fileSha256(requirementsPath)}` : 'no-requirements';
+    const installed = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, 'utf-8').trim() : '';
+    if (installed !== stamp) {
         if (fs.existsSync(requirementsPath)) {
-            console.log('[tools] ndlocr-liteのPython依存パッケージを入れます。初回だけ時間がかかります。');
+            console.log(installed
+                ? '[tools] ndlocr-liteの依存パッケージが変わったので入れ直します。'
+                : '[tools] ndlocr-liteのPython依存パッケージを入れます。初回だけ時間がかかります。');
             runChecked(venvPython, ['-m', 'pip', 'install', '-r', requirementsPath], repoPath);
         }
-        fs.writeFileSync(markerPath, new Date().toISOString(), 'utf-8');
+        fs.writeFileSync(markerPath, stamp, 'utf-8');
     }
 
     return venvPython;
@@ -411,32 +480,42 @@ async function resolveNdlocrLite(settings: any = {}) {
     const configuredPython = String(settings.pythonPath || '').trim();
 
     if (configuredRepo && fs.existsSync(path.join(configuredRepo, 'src', 'ocr.py'))) {
+        // 指定された場所は書き換えない。古ければ知らせるだけ。
+        if (isNdlocrOlderThanMinimum(configuredRepo)) {
+            console.warn(`[tools] 設定の ndlocr-lite が ${NDLOCR_MIN_VERSION.join('.')} より古いようです: ${configuredRepo}`);
+        }
         const pythonPath = configuredPython || ensureNdlocrVenv(configuredRepo, configuredPython);
         return { repoPath: configuredRepo, pythonPath };
     }
 
     const repoPath = path.join(getToolsRoot(), 'ndlocr-lite');
-    if (!fs.existsSync(path.join(repoPath, 'src', 'ocr.py'))) {
+    const present = fs.existsSync(path.join(repoPath, 'src', 'ocr.py'));
+    if (!present || isNdlocrOlderThanMinimum(repoPath)) {
         const downloadsDir = path.join(getToolsRoot(), 'downloads');
         const zipPath = path.join(downloadsDir, 'ndlocr-lite.zip');
         ensureDir(downloadsDir);
 
-        const sourceUrl = await getLatestNdlocrSourceUrl();
-        console.log('[tools] ndlocr-liteを自動取得します。初回だけ時間がかかります。');
-        await downloadFile(sourceUrl, zipPath);
-
         const stagingDir = `${repoPath}.staging-${process.pid}-${Date.now()}`;
         try {
+            const sourceUrl = await getLatestNdlocrSourceUrl();
+            console.log(present
+                ? `[tools] ndlocr-liteが古いので ${NDLOCR_MIN_VERSION.join('.')} 以上に取り直します。`
+                : '[tools] ndlocr-liteを自動取得します。初回だけ時間がかかります。');
+            await downloadFile(sourceUrl, zipPath);
             extractZipStrippingRoot(zipPath, stagingDir);
             if (!fs.existsSync(path.join(stagingDir, 'src', 'ocr.py'))) {
                 throw new Error('展開したndlocr-lite内に src/ocr.py が見つかりませんでした');
             }
             fs.rmSync(repoPath, { recursive: true, force: true });
             fs.renameSync(stagingDir, repoPath);
+            console.log(`[tools] ndlocr-liteを準備しました: ${repoPath}`);
+        } catch (err) {
+            // 取り直しに失敗しても、前の写しがあればそれで続ける（オフラインなど）。
+            if (!present) throw err;
+            console.warn(`[tools] ndlocr-liteを取り直せなかったので、今の写しを使います: ${err.message}`);
         } finally {
             fs.rmSync(stagingDir, { recursive: true, force: true });
         }
-        console.log(`[tools] ndlocr-liteを準備しました: ${repoPath}`);
     }
 
     const pythonPath = ensureNdlocrVenv(repoPath, configuredPython);
