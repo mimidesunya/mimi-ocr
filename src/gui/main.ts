@@ -141,8 +141,12 @@ function getConfiguredToolsRoot() {
     return path.join(getProjectRootForGui(), '.mimi-tools');
 }
 
+// PyPI 版は venv の ndlocr-lite コマンド、前の版（GitHub 版）は src/ocr.py で入っている。
 function isNdlocrLiteInstalled(toolsRoot) {
-    return fs.existsSync(path.join(toolsRoot, 'ndlocr-lite', 'src', 'ocr.py'));
+    const venvCommand = process.platform === 'win32'
+        ? path.join(toolsRoot, 'ndlocr-lite-venv', 'Scripts', 'ndlocr-lite.exe')
+        : path.join(toolsRoot, 'ndlocr-lite-venv', 'bin', 'ndlocr-lite');
+    return fs.existsSync(venvCommand) || fs.existsSync(path.join(toolsRoot, 'ndlocr-lite', 'src', 'ocr.py'));
 }
 
 function hasGeminiApiKey() {

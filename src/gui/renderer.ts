@@ -676,7 +676,11 @@ document.addEventListener('DOMContentLoaded', () => {
             delete config.providers;
         }
 
-        const ndlocrLite = {
+        // 画面に欄の無い repoPath・pythonPath（自分で入れた ndlocr-lite を使うとき）は、保存しても消さない。
+        const previousNdlocr = isPlainObject(previousTools.ndlocrLite) ? previousTools.ndlocrLite : {};
+        const ndlocrLite: any = {
+            ...(previousNdlocr.repoPath ? { repoPath: previousNdlocr.repoPath } : {}),
+            ...(previousNdlocr.pythonPath ? { pythonPath: previousNdlocr.pythonPath } : {}),
             parallelJobs: inputValue('cfgNdlocrParallelJobs') || 'auto',
             pageChunkSize: positiveInt(inputValue('cfgNdlocrPageChunkSize'), 8, 1, 200),
             imageDpi: positiveInt(inputValue('cfgNdlocrImageDpi'), 300, 72, 600),
@@ -1604,7 +1608,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     : null;
             }
             log(`ndlocr-lite の保存先: ${result.toolsRoot}`);
-            log('このあと GitHub から ndlocr-lite を自動取得します。初回だけ時間がかかります。');
+            log('このあと ndlocr-lite を自動で入れます（PC に Python 3.11 以上が無ければ uv で Python も入れます）。初回だけ数分かかります。');
         }
 
         return true;
