@@ -18,6 +18,7 @@ const {
     runGeminiRequestsWithRecoveryTransport,
     summarizeAiResponse,
     selectNextGeminiModel,
+    buildGeminiSafetyModelPriority,
     runSingleBatch,
     recoverPagesFromTrustedEmbeddedText,
     getOcrPrompt,
@@ -28,6 +29,7 @@ const {
 const {
     normalizeModelPriority,
     getGeminiChatModels,
+    setProviderModelOverride,
 } = require('../dist/src/lib/gemini_client.js');
 
 function createImageData(width, height, background = 255) {
@@ -359,6 +361,106 @@ test('Gemini model fallback advances on technical failure but stops on explicit 
     assert.equal(selectNextGeminiModel(models, 0, {
         candidates: [{ finishReason: 'PROHIBITED_CONTENT' }]
     }), null);
+});
+
+test('a refusal moves through the safety list, which extends the run list with the configured models', () => {
+    const refused = { promptFeedback: { blockReason: 'OTHER' } };
+    const safety = ['picked-model', 'model-1', 'model-2'];
+    assert.deepEqual(selectNextGeminiModel(['picked-model'], 0, refused, safety), { modelIndex: 1, modelId: 'model-1' });
+    assert.deepEqual(selectNextGeminiModel(['picked-model'], 1, {
+        candidates: [{ finishReason: 'PROHIBITED_CONTENT' }]
+    }, safety), { modelIndex: 2, modelId: 'model-2' });
+    assert.equal(selectNextGeminiModel(['picked-model'], 2, refused, safety), null);
+    // A technical failure still follows only the run's own list.
+    assert.equal(selectNextGeminiModel(['picked-model'], 0, null, safety), null);
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-ocr-safety-priority-test-'));
+    const configPath = path.join(tempDir, 'config.json');
+    const previousConfigPath = process.env.MIMI_OCR_CONFIG;
+    try {
+        fs.writeFileSync(configPath, JSON.stringify({
+            providers: { gemini: { chatModels: ['model-a', 'picked-model', 'model-b'] } }
+        }));
+        process.env.MIMI_OCR_CONFIG = configPath;
+        assert.deepEqual(buildGeminiSafetyModelPriority(['picked-model']), ['picked-model', 'model-a', 'model-b']);
+    } finally {
+        if (previousConfigPath === undefined) delete process.env.MIMI_OCR_CONFIG;
+        else process.env.MIMI_OCR_CONFIG = previousConfigPath;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('PDF OCR switches models on refusal and falls back to text without AI when every model refuses', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-ocr-refusal-fallback-test-'));
+    const pdfPath = path.join(tempDir, 'refusal.pdf');
+    const configPath = path.join(tempDir, 'config.json');
+    const previousConfigPath = process.env.MIMI_OCR_CONFIG;
+    const GeminiBatchProcessor = require('../dist/src/lib/gemini_batch.js');
+    const originalRunSync = GeminiBatchProcessor.prototype.runSync;
+    const modelCalls = [];
+    try {
+        const pdf = await PDFDocument.create();
+        const font = await pdf.embedFont(StandardFonts.Helvetica);
+        const texts = [
+            'Accepted page text is long enough to be read from the embedded text layer of this PDF. '.repeat(3),
+            'Refused page text is long enough to be read from the embedded text layer of this PDF. '.repeat(3),
+        ];
+        for (const text of texts) {
+            const page = pdf.addPage([612, 792]);
+            page.drawText(text, { x: 40, y: 700, size: 9, font, maxWidth: 520 });
+        }
+        fs.writeFileSync(pdfPath, await pdf.save());
+        fs.writeFileSync(configPath, JSON.stringify({
+            providers: {
+                gemini: {
+                    apiKey: 'synthetic-test-key',
+                    chatModels: ['model-primary', 'model-secondary', 'model-tertiary']
+                }
+            }
+        }));
+        process.env.MIMI_OCR_CONFIG = configPath;
+        setProviderModelOverride('gemini', 'chat', 'model-picked');
+
+        GeminiBatchProcessor.prototype.runSync = async function (requests, modelId) {
+            modelCalls.push([modelId, requests.length]);
+            return requests.map(request => {
+                if (JSON.stringify(request).includes('Accepted page')) {
+                    return {
+                        response: {
+                            candidates: [{
+                                content: { parts: [{ text: '### -- Begin Page 1 --\n\nAccepted by AI.\n\n### -- End --' }] },
+                                finishReason: 'STOP'
+                            }]
+                        },
+                        error: null
+                    };
+                }
+                // The refused page: its raw-text request and every image retry.
+                return { response: { promptFeedback: { blockReason: 'OTHER' } }, error: null };
+            });
+        };
+
+        const resultPath = await pdfToText(pdfPath, 1, 1, null, '', 'gemini', 'sync', false, false, true);
+        const result = fs.readFileSync(resultPath, 'utf8');
+
+        assert.match(resultPath, /refusal_paged\.md$/);
+        assert.deepEqual(modelCalls, [
+            ['model-picked', 2],
+            ['model-primary', 1],
+            ['model-secondary', 1],
+            ['model-tertiary', 1],
+        ]);
+        assert.match(result, /Accepted by AI\./);
+        assert.match(result, /### -- Begin Page 2 --\n\n<!-- mimi-ocr-fallback: embedded-pdf-text; reason=ai-refused -->\n\nRefused page text/);
+        assert.match(result, /"aiRefusedPages": \[\s*2\s*\]/);
+        assert.doesNotMatch(result, /\[ERROR: OCR Failed/);
+    } finally {
+        setProviderModelOverride('gemini', 'chat', '');
+        GeminiBatchProcessor.prototype.runSync = originalRunSync;
+        if (previousConfigPath === undefined) delete process.env.MIMI_OCR_CONFIG;
+        else process.env.MIMI_OCR_CONFIG = previousConfigPath;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 test('PDF OCR retries only the unresolved page with the next Gemini model', async () => {

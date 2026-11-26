@@ -11,7 +11,7 @@ const os = require('os');
 const { loadPdfjsLib } = require('./pdfjs_loader');
 const { extractPdfPagesToImages, detectBlankPdfPages, buildDocumentParameters, cleanupPdfResources } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
-const { getGeminiChatModel, getGeminiChatModels, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
+const { getGeminiChatModel, getGeminiChatModels, getConfiguredGeminiChatModels, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
 
 function getAiModelLabel(aiProvider) {
     const model = getProviderModel(aiProvider, 'chat');
@@ -453,11 +453,42 @@ function isRecitationStop(response) {
         .some(candidate => String(candidate?.finishReason || '').trim().toUpperCase() === 'RECITATION');
 }
 
-function selectNextGeminiModel(modelPriority, currentModelIndex, response = null) {
-    if (isExplicitSafetyStop(response)) return null;
+// A refusal (prompt block / SAFETY finish) moves through safetyModelPriority,
+// which starts with modelPriority so that model indexes stay comparable.
+// Callers that pass no safety list keep the old "stop on refusal" behaviour.
+function selectNextGeminiModel(modelPriority, currentModelIndex, response = null, safetyModelPriority = null) {
+    const priority = isExplicitSafetyStop(response) ? safetyModelPriority : modelPriority;
     const nextModelIndex = Number(currentModelIndex || 0) + 1;
-    const modelId = Array.isArray(modelPriority) ? modelPriority[nextModelIndex] : null;
+    const modelId = Array.isArray(priority) ? priority[nextModelIndex] : null;
     return modelId ? { modelIndex: nextModelIndex, modelId } : null;
+}
+
+// Models to try after a refusal: the run's own list first, then the configured
+// list (a GUI/CLI model choice narrows the run's list to one model).
+function buildGeminiSafetyModelPriority(modelPriority) {
+    const models = [...(modelPriority || []), ...(getConfiguredGeminiChatModels() || [])]
+        .map(model => String(model || '').trim())
+        .filter(Boolean);
+    return Array.from(new Set(models));
+}
+
+function buildAiRefusedFallbackPageContent(pageNum, rawText, source) {
+    return [
+        `### -- Begin Page ${pageNum} --`,
+        '',
+        `<!-- mimi-ocr-fallback: ${source}; reason=ai-refused -->`,
+        '',
+        normalizeNdlocrText(String(rawText || '')).trim(),
+        '',
+        '### -- End --'
+    ].join('\n');
+}
+
+function listAiRefusedFallbackPages(pageMap) {
+    return Array.from(pageMap.entries())
+        .filter(([, content]) => /<!--\s*mimi-ocr-fallback:[^>]*reason=ai-refused/.test(String(content || '')))
+        .map(([pageNum]) => Number(pageNum))
+        .sort((a, b) => a - b);
 }
 
 function toAbsoluteBatchPageMap(rawText, metaPages) {
@@ -849,6 +880,9 @@ function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}
                 imageDpi: ndlocrConfig.imageDpi
             } : null,
             preferPdfText: runtimeOptions.preferPdfText ? true : null,
+            aiRefusedPages: Array.isArray(runtimeOptions.aiRefusedPages) && runtimeOptions.aiRefusedPages.length > 0
+                ? runtimeOptions.aiRefusedPages
+                : null,
             hasError: runtimeOptions.hasError ? true : null
         }
     });
@@ -1183,7 +1217,7 @@ async function recoverPagesFromTrustedEmbeddedText(pdfPath, pageNumbers, pageMap
     // validate the next unresolved page and cascade through a damaged range.
     const trustedNeighborPages = new Set(
         Array.from(pageMap.entries())
-            .filter(([, content]) => !String(content || '').includes('mimi-ocr-fallback: embedded-pdf-text'))
+            .filter(([, content]) => !String(content || '').includes('mimi-ocr-fallback:'))
             .map(([pageNum]) => Number(pageNum))
     );
 
@@ -1273,6 +1307,9 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     if (geminiModelPriority.length > 1) {
         console.log(`[情報] Geminiモデル優先順: ${geminiModelPriority.join(' -> ')}`);
     }
+    const geminiSafetyModelPriority = geminiModelPriority.length > 0
+        ? buildGeminiSafetyModelPriority(geminiModelPriority)
+        : [];
     const primaryGeminiRequestMeta = geminiModelPriority.length > 0
         ? { modelIndex: 0, modelId: geminiModelPriority[0] }
         : {};
@@ -1419,19 +1456,25 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         }
         tmpDir = null;
     };
-    if (useNdlocr && ndlocrTargetPages.length > 0) {
-        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ndlocr_'));
-        ndlocrOutDir = path.join(tmpDir, 'output');
-        fs.mkdirSync(ndlocrOutDir);
+    let ndlocrRunCount = 0;
+    // ndlocr-lite を指定ページだけ実行し、結果を ndlocrOutDir/page_NNNN.txt に置く。
+    // 前処理と、AI に拒否されたページの後始末の両方から呼ぶ。失敗時は例外を投げる。
+    const runNdlocrForPages = async (targetPages) => {
+        if (!tmpDir) {
+            tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ndlocr_'));
+            ndlocrOutDir = path.join(tmpDir, 'output');
+            fs.mkdirSync(ndlocrOutDir);
+        }
+        ndlocrRunCount += 1;
 
         const parallelJobs = getNdlocrParallelJobs();
         const pageChunkSize = getNdlocrPageChunkSize();
         const workerStartDelayMs = getNdlocrWorkerStartDelayMs();
         const ndlocrImageDpi = getNdlocrImageDpi();
-        const workersRoot = path.join(tmpDir, 'workers');
+        const workersRoot = path.join(tmpDir, `workers${ndlocrRunCount}`);
         fs.mkdirSync(workersRoot, { recursive: true });
 
-        const sortedTargetPages = [...ndlocrTargetPages].sort((a, b) => a - b);
+        const sortedTargetPages = [...targetPages].sort((a, b) => a - b);
         const pageChunks = chunkArray(sortedTargetPages, pageChunkSize);
         const jobs = [];
         for (let i = 0; i < pageChunks.length; i++) {
@@ -1448,52 +1491,62 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             throw new Error('ndlocr の処理チャンクを作成できませんでした');
         }
         
-        console.log(`[ndlocr] 対象 ${ndlocrTargetPages.length} ページを処理します。`);
+        console.log(`[ndlocr] 対象 ${sortedTargetPages.length} ページを処理します。`);
         console.log(`[ndlocr] 並列ワーカー数: ${parallelJobs}`);
-        try {
-            const workerCount = Math.min(parallelJobs, jobs.length);
-            console.log(`[ndlocr] チャンクサイズ: ${pageChunkSize}ページ / チャンク数: ${jobs.length} / 起動間隔: ${workerStartDelayMs}ms / 画像DPI: ${ndlocrImageDpi}`);
+        const workerCount = Math.min(parallelJobs, jobs.length);
+        console.log(`[ndlocr] チャンクサイズ: ${pageChunkSize}ページ / チャンク数: ${jobs.length} / 起動間隔: ${workerStartDelayMs}ms / 画像DPI: ${ndlocrImageDpi}`);
 
-            const seenPages = new Set();
-            const totalPages = ndlocrTargetPages.length;
-            const scanProgress = () => {
-                if (!fs.existsSync(ndlocrOutDir)) return;
-                for (const fileName of fs.readdirSync(ndlocrOutDir)) {
-                    const match = fileName.match(/^page_(\d+)\.txt$/i);
-                    if (!match) continue;
-                    const pageNum = parseInt(match[1], 10);
-                    if (seenPages.has(pageNum)) continue;
-                    seenPages.add(pageNum);
-                    console.log(`[ndlocr] 完了: ページ ${pageNum} (${seenPages.size}/${totalPages})`);
-                }
-            };
-
-            const timer = setInterval(scanProgress, 1000);
-            let renderChain = Promise.resolve();
-            const renderWithLock = async (taskFn) => {
-                const run = () => taskFn();
-                const next = renderChain.then(run, run);
-                renderChain = next.catch(() => { });
-                return next;
-            };
-            const prepareJob = async (job) => {
-                await renderWithLock(async () => {
-                    const firstPage = job.pages[0];
-                    const lastPage = job.pages[job.pages.length - 1];
-                    const pageLabel = firstPage === lastPage ? `${firstPage}` : `${firstPage}-${lastPage}`;
-                    console.log(`[ndlocr] 画像化中: ページ ${pageLabel}`);
-                    await extractPdfPagesToImages(pdfPath, job.srcDir, ndlocrImageDpi, job.pages);
-                });
-            };
-
-            try {
-                await runNdlocrJobQueue(jobs, workerCount, workerStartDelayMs, ndlocrOutDir, prepareJob);
-            } finally {
-                clearInterval(timer);
-                scanProgress();
+        const targetSet = new Set(sortedTargetPages);
+        const seenPages = new Set();
+        const scanProgress = () => {
+            if (!fs.existsSync(ndlocrOutDir)) return;
+            for (const fileName of fs.readdirSync(ndlocrOutDir)) {
+                const match = fileName.match(/^page_(\d+)\.txt$/i);
+                if (!match) continue;
+                const pageNum = parseInt(match[1], 10);
+                if (!targetSet.has(pageNum) || seenPages.has(pageNum)) continue;
+                seenPages.add(pageNum);
+                console.log(`[ndlocr] 完了: ページ ${pageNum} (${seenPages.size}/${sortedTargetPages.length})`);
             }
+        };
 
-            console.log(`[ndlocr] ndlocr-lite の処理が完了しました。`);
+        const timer = setInterval(scanProgress, 1000);
+        let renderChain = Promise.resolve();
+        const renderWithLock = async (taskFn) => {
+            const run = () => taskFn();
+            const next = renderChain.then(run, run);
+            renderChain = next.catch(() => { });
+            return next;
+        };
+        const prepareJob = async (job) => {
+            await renderWithLock(async () => {
+                const firstPage = job.pages[0];
+                const lastPage = job.pages[job.pages.length - 1];
+                const pageLabel = firstPage === lastPage ? `${firstPage}` : `${firstPage}-${lastPage}`;
+                console.log(`[ndlocr] 画像化中: ページ ${pageLabel}`);
+                await extractPdfPagesToImages(pdfPath, job.srcDir, ndlocrImageDpi, job.pages);
+            });
+        };
+
+        try {
+            await runNdlocrJobQueue(jobs, workerCount, workerStartDelayMs, ndlocrOutDir, prepareJob);
+        } finally {
+            clearInterval(timer);
+            scanProgress();
+        }
+
+        console.log(`[ndlocr] ndlocr-lite の処理が完了しました。`);
+    };
+
+    const readNdlocrPageText = (pageNum) => {
+        if (!ndlocrOutDir) return null;
+        const txtPath = path.join(ndlocrOutDir, `page_${String(pageNum).padStart(4, '0')}.txt`);
+        return fs.existsSync(txtPath) ? fs.readFileSync(txtPath, 'utf8') : null;
+    };
+
+    if (useNdlocr && ndlocrTargetPages.length > 0) {
+        try {
+            await runNdlocrForPages(ndlocrTargetPages);
         } catch (err) {
             console.error(`[ndlocr エラー] ${err.message}`);
             cleanupNdlocrTempDir();
@@ -1624,6 +1677,8 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         const MAX_TABLE_RETRIES = 2;
         const droppedTableAttempts = new Map();
         const droppedTableFallback = new Map();
+        // すべてのモデルに拒否されたページ。ループの後で ndlocr-lite の結果を採用する。
+        const aiRefusedPages = new Set<number>();
 
         const progressState = {
             completed: 0,
@@ -1654,6 +1709,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 useNdlocr,
                 ndlocrOnly,
                 preferPdfText,
+                aiRefusedPages: listAiRefusedFallbackPages(pageMap),
                 hasError: true
             });
             writeTextFileWithContext(errorPath, contentWithMetadata, 'OCR中間結果ファイル');
@@ -1731,7 +1787,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
         const enqueueNextGeminiModel = async (meta, unresolvedPages, nextPendingIndices, response = null) => {
             if (aiProvider !== 'gemini' || unresolvedPages.length === 0) return false;
-            const nextModel = selectNextGeminiModel(geminiModelPriority, meta.modelIndex, response);
+            const nextModel = selectNextGeminiModel(geminiModelPriority, meta.modelIndex, response, geminiSafetyModelPriority);
             if (!nextModel) return false;
             const { modelIndex: nextModelIndex, modelId: nextModelId } = nextModel;
 
@@ -1949,7 +2005,23 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 if (success) {
                     clearPageErrorsForPages(meta.pages);
                 } else if (explicitSafetyStop) {
-                    console.warn(`[安全停止] ページ ${meta.pages.join(', ')} は別Geminiモデルへ自動送信しません。`);
+                    // 拒否は同じ要求を同じモデルへ送り直しても変わらない。
+                    // 複数ページの要求なら巻き添えのページを救うために1ページずつに分け、
+                    // 1ページなら別モデルへ回し、どのモデルも拒否したら AI をあきらめる。
+                    const refusedPages = meta.pages.filter(pageNum => !pageMap.has(pageNum));
+                    const splitQueued = meta.pages.length > 1
+                        ? await enqueueSinglePageRetries(originalIndex, meta, refusedPages, nextPendingIndices)
+                        : false;
+                    const modelQueued = splitQueued
+                        ? false
+                        : await enqueueNextGeminiModel(meta, refusedPages, nextPendingIndices, result.response);
+                    if (!splitQueued && !modelQueued && refusedPages.length > 0) {
+                        refusedPages.forEach(pageNum => aiRefusedPages.add(pageNum));
+                        console.warn(
+                            `[安全停止] ページ ${refusedPages.join(', ')} は試したすべてのモデルが応答を拒否しました。` +
+                            `AIでの後処理をあきらめ、ndlocr-lite の結果を採用します。`
+                        );
+                    }
                 } else if (splitPages.length > 0) {
                     const splitQueued = await enqueueSinglePageRetries(
                         originalIndex,
@@ -1999,6 +2071,38 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 `[警告] ページ ${tableFallbackPages.join(', ')} は再試行しても表を書き起こせませんでした。` +
                 `表以外の本文を採用しています。該当ページは目視確認してください。`
             );
+        }
+
+        // AI に拒否されたページは AI での後処理をあきらめ、ndlocr-lite の結果（または埋め込みテキスト）を
+        // そのまま採用する。前処理で ndlocr を回していなければ、そのページだけここで回す。
+        const refusedPages = Array.from(aiRefusedPages).filter(pageNum => !pageMap.has(pageNum)).sort((a, b) => a - b);
+        if (refusedPages.length > 0) {
+            const needNdlocr = refusedPages.filter(pageNum => !pageTextMap.has(pageNum) && readNdlocrPageText(pageNum) === null);
+            if (needNdlocr.length > 0) {
+                console.warn(`[安全停止] ページ ${needNdlocr.join(', ')} を ndlocr-lite で読みます。`);
+                try {
+                    await runNdlocrForPages(needNdlocr);
+                } catch (e) {
+                    console.warn(`[安全停止] ndlocr-lite の実行に失敗しました: ${e.message}`);
+                }
+            }
+            for (const pageNum of refusedPages) {
+                const embedded = embeddedTextMap.has(pageNum);
+                const rawText = embedded ? embeddedTextMap.get(pageNum) : (readNdlocrPageText(pageNum) ?? pageTextMap.get(pageNum) ?? null);
+                if (rawText === null || !normalizeNdlocrText(String(rawText)).trim()) {
+                    setPageError(pageNum, 'AIが応答を拒否し、ndlocr-lite でも文字を取れませんでした。');
+                    continue;
+                }
+                pageMap.set(pageNum, buildAiRefusedFallbackPageContent(pageNum, rawText, embedded ? 'embedded-pdf-text' : 'ndlocr-lite'));
+                pageErrorMap.delete(pageNum);
+            }
+            const adopted = refusedPages.filter(pageNum => pageMap.has(pageNum));
+            if (adopted.length > 0) {
+                console.warn(
+                    `[安全停止] ページ ${adopted.join(', ')} は AI 補正なしの ndlocr-lite の結果です` +
+                    ` (ページ先頭に mimi-ocr-fallback の印)。必要なら目視確認してください。`
+                );
+            }
         }
 
         const noTextPages = pageIndices.filter(pageNum => pageMap.has(pageNum) && isNoTextOcrPage(pageMap.get(pageNum)));
@@ -2070,6 +2174,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             useNdlocr,
             ndlocrOnly,
             preferPdfText,
+            aiRefusedPages: listAiRefusedFallbackPages(pageMap),
             hasError: true
         }), 'OCR中間結果ファイル');
         console.log(`[警告] エラーを含んだ状態で ${errorPath} に保存されました`);
@@ -2088,6 +2193,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             useNdlocr,
             ndlocrOnly,
             preferPdfText,
+            aiRefusedPages: listAiRefusedFallbackPages(pageMap),
             hasError: false
         }), 'OCR結果ファイル');
         console.log(`[成功] ${normalPath} に保存されました`);
@@ -2516,6 +2622,7 @@ module.exports = {
     isRecitationStop,
     isNoTextOcrPage,
     selectNextGeminiModel,
+    buildGeminiSafetyModelPriority,
     runSingleBatch,
     runGeminiRequestsWithRecoveryTransport,
     compareTextSimilarity,

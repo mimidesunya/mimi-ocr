@@ -64,7 +64,7 @@ AIサービスごとのAPIキーとモデル上書きをまとめます。APIキ
 | `chatModel` | 任意 | 旧版互換の単一モデル指定。`chatModels`がなければ第1順位として保持し、第2・第3順位を標準候補で補います |
 | `transcriptionModel` | 任意 | Gemini 音声認識用モデル。未指定なら `app.defaults.json` を使います |
 
-標準の優先順は`gemini-3.1-flash-lite`、`gemini-3.5-flash-lite`、`gemini-3.6-flash`です。通信エラー、空応答、ページマーカー欠落などで同一モデルの再試行を使い切った場合、成功済みページを保持し、未解決ページだけを次順位モデルへ送ります。`SAFETY`など明示的な安全停止は別モデルへ自動送信しません。環境変数`GEMINI_CHAT_MODELS`はカンマ区切りで指定できます。
+標準の優先順は`gemini-3.1-flash-lite`、`gemini-3.5-flash-lite`、`gemini-3.6-flash`です。通信エラー、空応答、ページマーカー欠落などで同一モデルの再試行を使い切った場合、成功済みページを保持し、未解決ページだけを次順位モデルへ送ります。`SAFETY`やプロンプトのブロック（`promptBlockReason`）など、モデルが応答を拒否した場合は、同じモデルへは送り直しません。複数ページの要求なら1ページずつに分け、それでも拒否されたページは次順位モデルへ送ります（GUI・CLIでモデルを1つ指定していても、`chatModels`の優先順を続けて試します）。すべてのモデルが拒否したページはAIでの後処理をあきらめ、ndlocr-liteの結果（`--prefer_pdf_text`なら埋め込みテキスト）を補正なしで採用します。ndlocrを前処理に使っていない場合は、そのページだけndlocr-liteを実行します。該当ページには`<!-- mimi-ocr-fallback: ndlocr-lite; reason=ai-refused -->`の印が付き、末尾メタデータの`aiRefusedPages`に一覧が残ります。環境変数`GEMINI_CHAT_MODELS`はカンマ区切りで指定できます。
 
 #### `providers.claude`
 

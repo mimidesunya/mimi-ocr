@@ -269,6 +269,12 @@ function fillModelPriority(primaryModels, fallbackModels, limit = 3) {
 function getGeminiChatModels() {
     const override = getProviderModelOverride('gemini', 'chat');
     if (override) return [override];
+    return getConfiguredGeminiChatModels();
+}
+
+// The configured priority list, ignoring a per-run model override. Used when a
+// page is refused by the selected model and other models may still answer.
+function getConfiguredGeminiChatModels() {
     const userGemini = loadUserConfig()?.providers?.gemini || {};
     const defaultsGemini = loadAppDefaults()?.providers?.gemini || {};
     const defaultModels = fillModelPriority(
@@ -354,6 +360,7 @@ module.exports = {
     getProviderModelOverride,
     normalizeModelPriority,
     getGeminiChatModels,
+    getConfiguredGeminiChatModels,
     getToolConfig,
     getApiKey,
     getGeminiChatModel
