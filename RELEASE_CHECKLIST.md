@@ -44,7 +44,7 @@
 - [ ] `ndlocr-lite` 初回取得
 - [ ] ReazonSpeech K2 / sherpa-onnx 初回準備
 - [ ] ReazonSpeech K2 モデル初回取得
-- [ ] Python 3.10 以上の確認
+- [ ] Python 3.11 以上（`ndlocr-lite`）・3.10 以上（ReazonSpeech K2）の確認
 - [ ] `ndlocr-lite` venv 作成
 - [ ] ネットワーク失敗時の表示
 
