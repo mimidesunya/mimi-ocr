@@ -224,7 +224,7 @@ function escapeHtml(s) {
 }
 
 function renderContext(ctx) {
-    if (!ctx) return '<span class="none">（この語は読んでいない）</span>';
+    if (!ctx) return '<span class="none">（こちらの読みには同じ語がありません。読み違えていることが多い）</span>';
     return `${escapeHtml(ctx.before)}<mark>${escapeHtml(ctx.mark)}</mark>${escapeHtml(ctx.after)}`;
 }
 
