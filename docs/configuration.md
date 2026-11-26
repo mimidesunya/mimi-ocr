@@ -152,20 +152,22 @@ ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffm
 
 ### `tools.ndlocrLite`
 
-`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。標準値は `app.defaults.json` にあります。プログラム本体は外部ツール保存先の `ndlocr-lite` に自動取得し、専用Python環境も同じ保存先の `ndlocr-lite-venv` に作ります。
+`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。標準値は `app.defaults.json` にあります。ndlocr-lite は PyPI 版を外部ツール保存先の `ndlocr-lite-venv`（専用の Python 環境）へ自動で入れます（[セットアップ](setup.md)）。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `parallelJobs` | 任意 | `auto` または数値 |
 | `pageChunkSize` | 任意 | ndlocr 1回の起動で処理するページ数 |
 | `imageDpi` | 任意 | PDF画像化の解像度（dpi） |
+| `repoPath` | 任意 | 自分で clone した ndlocr-lite の場所。指定すると PyPI 版の代わりに、その `src/ocr.py` で動かす |
+| `pythonPath` | 任意 | `repoPath` と組みにすると、その Python で `src/ocr.py` を動かす。`repoPath` なしなら `ndlocr-lite-venv` を作る元の Python（3.11 以上） |
 
 補足:
 
 - `parallelJobs: "auto"` の場合、CPU数を元に `1` 以上 `4` 以下で自動調整されます。
 - `pageChunkSize` は既定で `8` です。
 - `imageDpi` は既定で `300` です。大容量PDFでメモリ不足が出る場合は `200` 前後まで下げると安定しやすくなります。
-- 自動取得にはインターネット接続と Python 3.10 以上が必要です。
+- 自動で入れるにはインターネット接続が要ります。PC に Python 3.11 以上が無ければ、uv で Python 3.12 を外部ツール保存先へ入れます。
 
 ### `tools.reazonK2`
 

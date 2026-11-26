@@ -6,7 +6,7 @@
 - 開発環境では Node.js と npm
 - Windows リリースパッケージ利用時は Node.js / npm 不要
 - `npm install` が通るローカルビルド環境（開発・リリース作成時）
-- `ndlocr-lite` を使う場合は Python 3.11 以上（ndlocr-lite 2.0.0 から）
+- `ndlocr-lite` は初回使用時に自動で入る（Python 3.11 以上が無い PC でも uv で Python を入れるので、Python を自分で入れなくてよい）
 - macOS で無音カットや音声変換を使う場合は ffmpeg（例: `brew install ffmpeg`）
 - `bin/mimi-ocr.exe` を小さく作る場合は MinGW-w64 の `gcc` / `windres`
 - MinGW-w64 がない環境で `bin/mimi-ocr.exe` を作る場合は .NET 10 SDK
@@ -29,7 +29,13 @@ GUI上部の「設定」からAPIキーやモデル名の上書きを設定で�
 
 ### 3. 必要ツールについて
 
-法匪モードは同梱テンプレートを使うため、追加設定は不要です。ndlocr-lite は初回使用時にアプリ標準の保存先へ GitHub から自動準備します。ffmpeg は Windows では外部ツール保存先へ自動準備し、macOS では PATH 上の `ffmpeg` / `ffprobe` を使います。
+法匪モードは同梱テンプレートを使うため、追加設定は不要です。ffmpeg は Windows では外部ツール保存先へ自動準備し、macOS では PATH 上の `ffmpeg` / `ffprobe` を使います。
+
+ndlocr-lite は初回使用時に、PyPI 版（`ndlocr-lite>=2.0,<3`）を外部ツール保存先の `ndlocr-lite-venv`（専用の Python 環境）へ自動で入れます。PC に Python 3.11 以上があればそれで環境を作り、無ければ版を固定した [uv](https://github.com/astral-sh/uv) を外部ツール保存先の `uv` に取り（配布元の sha256 で確かめます）、uv で Python 3.12 を `uv-python` に入れてから環境を作ります。uv で入れた Python は PATH にも Windows のレジストリにも登録しないので、PC のほかの設定は変わりません。
+
+初回は依存パッケージ（onnxruntime、OpenCV など）を約100MB、文字認識モデルを4つで約160MB取るので、回線にもよりますが数分かかります。入れたあとの大きさは、Python 環境が約350MB、モデルが約150MBです。uv で Python を入れる場合は、uv（取得約16MB、置くと約31MB）と Python 3.12（取得約21MB、置くと約69MB）が加わります。モデルは ndlocr-lite の決まりで、Windows では `%LOCALAPPDATA%\ndlocr-lite\models\v2`、macOS では `~/Library/Caches/ndlocr-lite/models/v2` に置かれます。前の版で GitHub から取った外部ツール保存先の `ndlocr-lite` フォルダは消さずに残しますが、もう使いません。そこにあるモデルは取り直さずに写し、入っている依存パッケージもそのまま使うので、移るときの取得は ndlocr-lite 本体だけで済みます。
+
+自分で clone した ndlocr-lite を使いたい場合は、`config.json` の `tools.ndlocrLite.repoPath` にその場所を指定してください。従来どおり `src/ocr.py` で動かし、`pythonPath` も指定すればその Python で、指定しなければ `ndlocr-lite-venv` に `requirements.txt` を入れて動かします。
 
 ### 4. ビルドする
 

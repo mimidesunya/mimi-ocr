@@ -9,12 +9,29 @@ const { getProjectRoot, loadConfig } = require('./gemini_client');
 
 const FFMPEG_ZIP_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
 const FFMPEG_SHA_URL = `${FFMPEG_ZIP_URL}.sha256`;
-const NDLOCR_RELEASE_API_URL = 'https://api.github.com/repos/ndl-lab/ndlocr-lite/releases/latest';
-const NDLOCR_SOURCE_FALLBACK_URL = 'https://github.com/ndl-lab/ndlocr-lite/archive/refs/heads/master.zip';
-// 自動で取ってきた ndlocr-lite がこれより古ければ取り直す（2.0.0 でモデルのファイル名と依存が変わった）。
+// 設定で指定された ndlocr-lite がこれより古ければ知らせる（2.0.0 でモデルのファイル名と依存が変わった）。
 const NDLOCR_MIN_VERSION = [2, 0, 0];
 // ndlocr-lite 2.0.0 の CLI は Python 3.11 以上（pyproject の requires-python、Pillow 13）。
 const NDLOCR_MIN_PYTHON = [3, 11];
+// PyPI 版 ndlocr-lite を入れる範囲。入っている版がこの範囲を外れたら入れ直す。
+const NDLOCR_PIP_SPEC = 'ndlocr-lite>=2.0,<3';
+const NDLOCR_PIP_MIN = [2, 0, 0];
+const NDLOCR_PIP_BELOW = [3, 0, 0];
+// ndlocr-lite の依存（onnxruntime、OpenCV、numpy など）の取得量と、入れた venv の大きさ（2.0.0、Windows x64 で実測 95MB・354MB）。
+const NDLOCR_PIP_DOWNLOAD_APPROX_MB = 100;
+const NDLOCR_VENV_APPROX_MB = 350;
+// PyPI 版が初回に取る文字認識モデル1つの大きさ（2.0.0 は4つで約157MB）。
+const NDLOCR_MODEL_APPROX_MB = 40;
+// Python 3.11 以上が無い PC では、uv（astral-sh/uv の単体の実行ファイル）で外部ツール保存先へ Python を入れる。
+const UV_VERSION = '0.13.8';
+const UV_PYTHON_VERSION = '3.12';
+// sha256 は配布元（GitHub release の *.sha256）の値。
+const UV_RELEASE_ASSETS = {
+    'win32-x64': { asset: 'uv-x86_64-pc-windows-msvc.zip', sha256: '529e78a9cec6cd7e3e014f7ecd8bda0c113969d4ed0f2efeedb85c30943325b8' },
+    'win32-arm64': { asset: 'uv-aarch64-pc-windows-msvc.zip', sha256: '59e6d919bed1f72035e622a7c930058f08a8931c4c78ceaf9f56e7fb74dd2c48' },
+    'darwin-arm64': { asset: 'uv-aarch64-apple-darwin.tar.gz', sha256: '6b71028a6b904f2ae3340ef52e595512de807d06c0a20eaef2f692581b246558' },
+    'darwin-x64': { asset: 'uv-x86_64-apple-darwin.tar.gz', sha256: 'a04c2ffeac28b2003a2c13caf538ab425fcd7def3e4a41571f4a8fb370a66af3' },
+};
 const REAZON_K2_PACKAGE_SPEC = 'git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/k2-asr';
 const VIBEASR_CPP_REPOSITORY = 'https://github.com/microsoft/VibeASR.cpp.git';
 const VIBEASR_CPP_REVISION = '5cbce71c65911a7e10639ac13b6ab6929e4c8f9e';
@@ -163,8 +180,12 @@ async function verifySha256IfAvailable(filePath, shaUrl) {
         return;
     }
 
+    verifySha256(filePath, expected);
+}
+
+function verifySha256(filePath, expected) {
     const actual = sha256File(filePath);
-    if (actual.toLowerCase() !== expected.toLowerCase()) {
+    if (actual.toLowerCase() !== String(expected).toLowerCase()) {
         throw new Error(`SHA256が一致しません: expected=${expected} actual=${actual}`);
     }
 }
@@ -266,45 +287,36 @@ async function resolveFfmpegTools(settings: any = {}) {
     throw new Error('ffmpeg が見つかりません。PATH 上に ffmpeg と ffprobe をインストールしてください。');
 }
 
-function stripFirstPathPart(entryName) {
-    return entryName.replace(/\\/g, '/').split('/').slice(1).join('/');
-}
-
-function extractZipStrippingRoot(zipPath, destDir) {
-    const zip = new AdmZip(zipPath);
-    fs.rmSync(destDir, { recursive: true, force: true });
-    ensureDir(destDir);
-
-    for (const entry of zip.getEntries()) {
-        if (entry.isDirectory) continue;
-        const relative = stripFirstPathPart(entry.entryName);
-        if (!relative || relative.includes('..')) continue;
-        const destPath = path.resolve(destDir, relative);
-        if (!destPath.startsWith(path.resolve(destDir) + path.sep)) continue;
-        writeZipEntry(zip, entry, destPath);
-    }
-}
-
-async function getLatestNdlocrSourceUrl() {
-    try {
-        const text = String(await downloadText(NDLOCR_RELEASE_API_URL));
-        const parsed = JSON.parse(text);
-        if (parsed?.zipball_url) return parsed.zipball_url;
-    } catch (err) {
-        console.warn(`[tools] ndlocr-lite最新リリース情報を取得できませんでした: ${err.message}`);
-    }
-    return NDLOCR_SOURCE_FALLBACK_URL;
-}
-
 function getVenvPythonPath(venvDir) {
     return process.platform === 'win32'
         ? path.join(venvDir, 'Scripts', 'python.exe')
         : path.join(venvDir, 'bin', 'python');
 }
 
-function runChecked(command, args, cwd) {
+// venv に pip で入れたコマンド（Windows は Scripts/<name>.exe、mac / Linux は bin/<name>）。
+function getVenvScriptPath(venvDir, name) {
+    return process.platform === 'win32'
+        ? path.join(venvDir, 'Scripts', `${name}.exe`)
+        : path.join(venvDir, 'bin', name);
+}
+
+function readTextIfExists(filePath) {
+    try {
+        return fs.readFileSync(filePath, 'utf-8').trim();
+    } catch (_err) {
+        return '';
+    }
+}
+
+function formatElapsed(ms) {
+    const seconds = Math.max(1, Math.round(ms / 1000));
+    return seconds < 60 ? `${seconds}秒` : `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
+}
+
+function runChecked(command, args, cwd, env = undefined) {
     const result = spawnSync(command, args, {
         cwd,
+        env,
         stdio: 'inherit',
         windowsHide: true,
         shell: false,
@@ -397,22 +409,15 @@ function getWindowsPythonInstallCandidates() {
     return candidates.sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
-// minVersion を渡すと、それより古い Python は選ばない（[3, 11] など）。
-function resolveBasePythonCommand(configuredPython = '', minVersion = null) {
-    ensureDir(getToolsRoot());
-    const isNewEnough = (version) => !minVersion || (version && compareVersionNumbers(version, minVersion) >= 0);
-    const configured = String(configuredPython || '').trim();
-    if (configured) {
-        const version = getPythonVersion(configured);
-        if (!version) {
-            throw new Error(`設定されたPythonを起動できません: ${configured}`);
-        }
-        if (!isNewEnough(version)) {
-            throw new Error(`設定されたPythonは ${version.join('.')} です。Python ${minVersion.join('.')} 以上を指定してください: ${configured}`);
-        }
-        return { command: configured, argsPrefix: [] };
-    }
+function isPythonNewEnough(version, minVersion) {
+    return !minVersion || (!!version && compareVersionNumbers(version, minVersion) >= 0);
+}
 
+// PC に入っている Python を探す。minVersion を渡すと、それより古い Python は選ばない（[3, 11] など）。
+// 見つからなければ null。MIMI_TOOLS_IGNORE_SYSTEM_PYTHON=1 なら探さない（uv の経路を試すため）。
+function findSystemPython(minVersion = null) {
+    if (process.env.MIMI_TOOLS_IGNORE_SYSTEM_PYTHON === '1') return null;
+    ensureDir(getToolsRoot());
     const candidates = [];
     if (process.platform === 'win32') {
         for (const pythonPath of getWindowsPythonInstallCandidates()) {
@@ -427,21 +432,151 @@ function resolveBasePythonCommand(configuredPython = '', minVersion = null) {
     candidates.push({ command: 'python', argsPrefix: [] });
 
     for (const candidate of candidates) {
-        if (isNewEnough(getPythonVersion(candidate.command, candidate.argsPrefix))) {
+        if (isPythonNewEnough(getPythonVersion(candidate.command, candidate.argsPrefix), minVersion)) {
             return candidate;
         }
     }
-
-    const required = minVersion ? `Python ${minVersion.join('.')} 以上` : 'Python 3';
-    throw new Error(`${required} が見つかりません。ndlocr-lite の自動セットアップには Python 3.11 以上が必要です。Windowsでは https://www.python.org/downloads/windows/ から Python をインストールするか、config.json の tools.ndlocrLite.pythonPath に Python のパスを指定してください。`);
+    return null;
 }
 
-function ensureNdlocrVenv(repoPath, basePython) {
-    const venvDir = path.join(getToolsRoot(), 'ndlocr-lite-venv');
-    const venvPython = getVenvPythonPath(venvDir);
-    // 入れた requirements.txt の sha256。ndlocr-lite を取り直して依存が変わったら入れ直す。
-    const markerPath = path.join(venvDir, '.mimi-installed');
+// 設定された Python か、PC に入っている Python。見つからなければ投げる。
+function resolveBasePythonCommand(configuredPython = '', minVersion = null) {
+    ensureDir(getToolsRoot());
+    const configured = String(configuredPython || '').trim();
+    if (configured) {
+        const version = getPythonVersion(configured);
+        if (!version) {
+            throw new Error(`設定されたPythonを起動できません: ${configured}`);
+        }
+        if (!isPythonNewEnough(version, minVersion)) {
+            throw new Error(`設定されたPythonは ${version.join('.')} です。Python ${minVersion.join('.')} 以上を指定してください: ${configured}`);
+        }
+        return { command: configured, argsPrefix: [] };
+    }
 
+    const found = findSystemPython(minVersion);
+    if (found) return found;
+
+    const required = minVersion ? `Python ${minVersion.join('.')} 以上` : 'Python 3';
+    throw new Error(`${required} が見つかりません。Windowsでは https://www.python.org/downloads/windows/ から Python をインストールするか、設定に Python のパスを指定してください。`);
+}
+
+function getUvRelease(platform = process.platform, arch = process.arch) {
+    const entry = UV_RELEASE_ASSETS[`${platform}-${arch}`];
+    if (!entry) return null;
+    return {
+        version: UV_VERSION,
+        asset: entry.asset,
+        sha256: entry.sha256,
+        url: `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${entry.asset}`,
+        exeName: platform === 'win32' ? 'uv.exe' : 'uv',
+    };
+}
+
+function findFileNamed(dir, name, depth = 2) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isFile() && entry.name === name) return fullPath;
+        if (entry.isDirectory() && depth > 0) {
+            const found = findFileNamed(fullPath, name, depth - 1);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+// 配布物から uv の実行ファイルだけを destDir に出す。Windows は zip の直下、macOS は tar.gz の uv-<target>/uv。
+function extractUvExecutable(archivePath, destDir, exeName) {
+    const destPath = path.join(destDir, exeName);
+    if (/\.zip$/i.test(archivePath)) {
+        const zip = new AdmZip(archivePath);
+        const entry = zip.getEntries().find(e => !e.isDirectory && path.posix.basename(e.entryName.replace(/\\/g, '/')) === exeName);
+        if (!entry) throw new Error(`${exeName} がzip内に見つかりませんでした`);
+        writeZipEntry(zip, entry, destPath);
+    } else {
+        const unpackDir = path.join(destDir, 'unpack');
+        ensureDir(unpackDir);
+        runChecked('tar', ['-xzf', archivePath, '-C', unpackDir], destDir);
+        const found = findFileNamed(unpackDir, exeName);
+        if (!found) throw new Error(`${exeName} が配布物の中に見つかりませんでした`);
+        fs.copyFileSync(found, destPath);
+        fs.rmSync(unpackDir, { recursive: true, force: true });
+    }
+    fs.chmodSync(destPath, 0o755);
+}
+
+// 版を固定した uv を外部ツール保存先の uv/ に用意する（ffmpeg と同じく downloads/ に落とし、sha256 を確かめて置き換える）。
+async function ensureUv() {
+    const release = getUvRelease();
+    if (!release) {
+        const onPath = findOnPath('uv');
+        if (onPath) return onPath;
+        throw new Error(`Python ${NDLOCR_MIN_PYTHON.join('.')} 以上が見つかりません。Python ${NDLOCR_MIN_PYTHON.join('.')} 以上を入れるか、uv を入れてください（curl -LsSf https://astral.sh/uv/install.sh | sh）。config.json の tools.ndlocrLite.pythonPath に Python のパスを指定することもできます。`);
+    }
+
+    const toolsRoot = getToolsRoot();
+    const uvDir = path.join(toolsRoot, 'uv');
+    const uvPath = path.join(uvDir, release.exeName);
+    if (isExecutableFile(uvPath) && readTextIfExists(path.join(uvDir, '.mimi-version')) === release.version) {
+        return uvPath;
+    }
+
+    const downloadsDir = path.join(toolsRoot, 'downloads');
+    const archivePath = path.join(downloadsDir, release.asset);
+    ensureDir(downloadsDir);
+    console.log(`[tools] uv ${release.version} を取得します（約16MB）。`);
+    await downloadFile(release.url, archivePath);
+    verifySha256(archivePath, release.sha256);
+
+    const stagingDir = `${uvDir}.staging-${process.pid}-${Date.now()}`;
+    try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        ensureDir(stagingDir);
+        extractUvExecutable(archivePath, stagingDir, release.exeName);
+        fs.writeFileSync(path.join(stagingDir, '.mimi-version'), release.version, 'utf-8');
+        fs.rmSync(uvDir, { recursive: true, force: true });
+        fs.renameSync(stagingDir, uvDir);
+    } finally {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+    }
+    fs.rmSync(archivePath, { force: true });
+    console.log(`[tools] uvを準備しました: ${uvPath}`);
+    return uvPath;
+}
+
+// uv が入れる Python と uv のキャッシュは外部ツール保存先に置く。PATH や Windows のレジストリには登録しない。
+function getUvEnv(toolsRoot) {
+    return {
+        ...process.env,
+        UV_PYTHON_INSTALL_DIR: path.join(toolsRoot, 'uv-python'),
+        UV_CACHE_DIR: path.join(toolsRoot, 'uv-cache'),
+        UV_PYTHON_PREFERENCE: 'only-managed',
+    };
+}
+
+async function createVenvWithUv(venvDir) {
+    const toolsRoot = getToolsRoot();
+    const uv = await ensureUv();
+    const env = getUvEnv(toolsRoot);
+    console.log(`[tools] Python ${NDLOCR_MIN_PYTHON.join('.')} 以上が見つからないので、uv で Python ${UV_PYTHON_VERSION} を外部ツール保存先へ入れます（PC の設定は変えません）: ${env.UV_PYTHON_INSTALL_DIR}`);
+    const installArgs = ['python', 'install', '--no-bin'];
+    if (process.platform === 'win32') installArgs.push('--no-registry');
+    runChecked(uv, [...installArgs, UV_PYTHON_VERSION], toolsRoot, env);
+    // --seed で pip も入れる（あとは PC の Python で作った venv と同じに扱う）。
+    runChecked(uv, ['venv', '--seed', '--python', UV_PYTHON_VERSION, venvDir], toolsRoot, env);
+}
+
+// ndlocr-lite 用 venv を作る元。設定の Python → PC の Python 3.11 以上 → uv で入れる Python の順。
+function chooseNdlocrVenvBase(configuredBasePython = '') {
+    const configured = String(configuredBasePython || '').trim();
+    if (configured) return { kind: 'python', ...resolveBasePythonCommand(configured, NDLOCR_MIN_PYTHON) };
+    const found = findSystemPython(NDLOCR_MIN_PYTHON);
+    return found ? { kind: 'python', ...found } : { kind: 'uv' };
+}
+
+// ndlocr-lite 用 venv の Python。起動できない、または 3.11 より古ければ作り直す。
+async function ensureNdlocrVenvPython(venvDir, configuredBasePython = '') {
+    const venvPython = getVenvPythonPath(venvDir);
     if (isExecutableFile(venvPython)) {
         const version = getPythonVersion(venvPython);
         if (!version) {
@@ -450,24 +585,41 @@ function ensureNdlocrVenv(repoPath, basePython) {
         } else if (compareVersionNumbers(version, NDLOCR_MIN_PYTHON) < 0) {
             console.warn(`[tools] ndlocr-lite用のPython環境が Python ${version.join('.')} なので、${NDLOCR_MIN_PYTHON.join('.')} 以上で作り直します。`);
             fs.rmSync(venvDir, { recursive: true, force: true });
+        } else {
+            return venvPython;
         }
     }
 
-    if (!isExecutableFile(venvPython)) {
+    // 作りかけの残りがあれば消してから作る
+    fs.rmSync(venvDir, { recursive: true, force: true });
+    const base = chooseNdlocrVenvBase(configuredBasePython);
+    if (base.kind === 'python') {
         console.log('[tools] ndlocr-lite用のPython環境を作ります。');
-        const python = resolveBasePythonCommand(basePython, NDLOCR_MIN_PYTHON);
-        runChecked(python.command, [...python.argsPrefix, '-m', 'venv', venvDir], getToolsRoot());
+        runChecked(base.command, [...base.argsPrefix, '-m', 'venv', venvDir], getToolsRoot());
+    } else {
+        await createVenvWithUv(venvDir);
     }
+    if (!isExecutableFile(venvPython)) {
+        throw new Error(`ndlocr-lite用のPython環境を作れませんでした: ${venvDir}`);
+    }
+    return venvPython;
+}
+
+// 自分で clone した ndlocr-lite（設定の repoPath）用。requirements.txt の sha256 を印にし、変わったら入れ直す。
+async function ensureNdlocrRepoVenv(repoPath) {
+    const venvDir = path.join(getToolsRoot(), 'ndlocr-lite-venv');
+    const markerPath = path.join(venvDir, '.mimi-installed');
+    const venvPython = await ensureNdlocrVenvPython(venvDir);
 
     const requirementsPath = path.join(repoPath, 'requirements.txt');
     const stamp = fs.existsSync(requirementsPath) ? `requirements-sha256:${fileSha256(requirementsPath)}` : 'no-requirements';
-    const installed = fs.existsSync(markerPath) ? fs.readFileSync(markerPath, 'utf-8').trim() : '';
+    const installed = readTextIfExists(markerPath);
     if (installed !== stamp) {
         if (fs.existsSync(requirementsPath)) {
             console.log(installed
                 ? '[tools] ndlocr-liteの依存パッケージが変わったので入れ直します。'
                 : '[tools] ndlocr-liteのPython依存パッケージを入れます。初回だけ時間がかかります。');
-            runChecked(venvPython, ['-m', 'pip', 'install', '-r', requirementsPath], repoPath);
+            runChecked(venvPython, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', requirementsPath], repoPath);
         }
         fs.writeFileSync(markerPath, stamp, 'utf-8');
     }
@@ -475,51 +627,176 @@ function ensureNdlocrVenv(repoPath, basePython) {
     return venvPython;
 }
 
-async function resolveNdlocrLite(settings: any = {}) {
+// 印に書いた PyPI 版の版（"ndlocr-lite==2.0.0"）。前の版の印（requirements の sha256、日時）なら null。
+function readNdlocrPipMarker(markerPath) {
+    const match = readTextIfExists(markerPath).match(/^ndlocr-lite==(\S+)$/);
+    return match ? parseVersionNumbers(match[1]) : null;
+}
+
+function isNdlocrPipVersionInRange(version) {
+    return !!version
+        && compareVersionNumbers(version, NDLOCR_PIP_MIN) >= 0
+        && compareVersionNumbers(version, NDLOCR_PIP_BELOW) < 0;
+}
+
+function readInstalledNdlocrVersion(venvPython) {
+    const result = spawnSync(venvPython, ['-I', '-c', 'from importlib.metadata import version; print(version("ndlocr-lite"))'], {
+        cwd: getToolsRoot(),
+        encoding: 'utf-8',
+        windowsHide: true,
+        shell: false,
+    });
+    if (result.error || result.status !== 0) return '';
+    return String(result.stdout || '').trim();
+}
+
+// PyPI 版のモデル（model_download.MODELS）を OS のキャッシュ（Windows は %LOCALAPPDATA%\ndlocr-lite\models\v2）へ先に取る。
+// 前の版で GitHub から取った ndlocr-lite の src/model に同じモデルがあれば、取らずに写す。
+// 出力は最後の行の JSON: {"cache": 保存先, "missing": [{"name", "seed": 写せるか}]}（"fetch" では取る前の状態）。
+const NDLOCR_MODEL_SCRIPT = [
+    'import hashlib, json, pathlib, shutil, sys',
+    'import model_download as m',
+    'def sha256(p):',
+    '    h = hashlib.sha256()',
+    '    with p.open("rb") as f:',
+    '        for chunk in iter(lambda: f.read(1 << 20), b""):',
+    '            h.update(chunk)',
+    '    return h.hexdigest()',
+    'action, seed = sys.argv[1], pathlib.Path(sys.argv[2])',
+    'cache = m.model_cache_dir()',
+    'missing = []',
+    'for name, expected in m.MODELS.values():',
+    '    dest = cache / name',
+    '    if dest.is_file() and sha256(dest) == expected:',
+    '        continue',
+    '    src = seed / name',
+    '    use_seed = src.is_file() and sha256(src) == expected',
+    '    missing.append({"name": name, "seed": use_seed})',
+    '    if action != "fetch":',
+    '        continue',
+    '    if use_seed:',
+    '        cache.mkdir(parents=True, exist_ok=True)',
+    '        part = cache / (name + ".mimi-part")',
+    '        shutil.copyfile(src, part)',
+    '        part.replace(dest)',
+    '    else:',
+    '        m.get_model_path(name, expected, cache / "__no_bundled_models__")',
+    'print(json.dumps({"cache": str(cache), "missing": missing}))',
+].join('\n');
+
+function runNdlocrModelScript(venvPython, action, seedDir) {
+    const result = spawnSync(venvPython, ['-I', '-c', NDLOCR_MODEL_SCRIPT, action, seedDir], {
+        cwd: getToolsRoot(),
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'inherit'],
+        windowsHide: true,
+        shell: false,
+    });
+    if (result.error || result.status !== 0) return null;
+    const lines = String(result.stdout || '').trim().split(/\r?\n/);
+    try {
+        return JSON.parse(lines[lines.length - 1]);
+    } catch (_err) {
+        return null;
+    }
+}
+
+// 並行して起動する読み取りがそれぞれモデルを取りにいかないよう、入れた直後に一度だけ取る。
+// 失敗しても止めない（最初の読み取りのときに ndlocr-lite が自分で取る）。
+function prefetchNdlocrModels(venvPython, seedDir) {
+    const probe = runNdlocrModelScript(venvPython, 'probe', seedDir);
+    if (!probe) {
+        console.warn('[tools] ndlocr-liteのモデルの保存先を調べられませんでした。最初の読み取りのときに ndlocr-lite が取得します。');
+        return;
+    }
+    const missing = Array.isArray(probe.missing) ? probe.missing : [];
+    if (missing.length === 0) return;
+
+    const downloads = missing.filter(item => !item.seed).length;
+    if (downloads > 0) {
+        console.log(`[tools] ndlocr-liteの文字認識モデル（${downloads}個、約${downloads * NDLOCR_MODEL_APPROX_MB}MB）を取得します。初回だけ時間がかかります。保存先: ${probe.cache}`);
+    }
+    if (missing.length > downloads) {
+        console.log(`[tools] 前に取った ndlocr-lite のモデル（${missing.length - downloads}個）を写します: ${seedDir} → ${probe.cache}`);
+    }
+    const started = Date.now();
+    if (runNdlocrModelScript(venvPython, 'fetch', seedDir)) {
+        console.log(`[tools] ndlocr-liteのモデルを準備しました（${formatElapsed(Date.now() - started)}）。`);
+    } else {
+        console.warn('[tools] ndlocr-liteのモデルを取得できませんでした。最初の読み取りのときに ndlocr-lite がもう一度取得します。');
+    }
+}
+
+// PyPI 版 ndlocr-lite を外部ツール保存先の ndlocr-lite-venv に入れる。
+// 前の版で GitHub 版の依存を入れた venv はそのまま使い、ndlocr-lite だけを足す（依存は同じ版なので取り直さない）。
+async function ensureNdlocrPip(configuredBasePython = '') {
+    const toolsRoot = getToolsRoot();
+    const venvDir = path.join(toolsRoot, 'ndlocr-lite-venv');
+    const markerPath = path.join(venvDir, '.mimi-installed');
+    const venvPython = await ensureNdlocrVenvPython(venvDir, configuredBasePython);
+    const command = getVenvScriptPath(venvDir, 'ndlocr-lite');
+
+    if (isNdlocrPipVersionInRange(readNdlocrPipMarker(markerPath)) && isExecutableFile(command)) {
+        return { venvPython, command };
+    }
+
+    console.log(fs.existsSync(markerPath)
+        ? `[tools] ndlocr-liteを PyPI 版（${NDLOCR_PIP_SPEC}）に入れ替えます。入っている依存パッケージはそのまま使います。`
+        : `[tools] ndlocr-lite（${NDLOCR_PIP_SPEC}）を PyPI から入れます。初回だけ、依存パッケージを約${NDLOCR_PIP_DOWNLOAD_APPROX_MB}MB取り（入れると約${NDLOCR_VENV_APPROX_MB}MB）、数分かかります: ${venvDir}`);
+    const started = Date.now();
+    runChecked(venvPython, ['-m', 'pip', 'install', '--disable-pip-version-check', NDLOCR_PIP_SPEC], toolsRoot);
+    const installed = readInstalledNdlocrVersion(venvPython);
+    if (!isNdlocrPipVersionInRange(parseVersionNumbers(installed)) || !isExecutableFile(command)) {
+        throw new Error(`ndlocr-lite を入れられませんでした（入った版: ${installed || '不明'}）。上の pip の表示を確認してください。`);
+    }
+    fs.writeFileSync(markerPath, `ndlocr-lite==${installed}`, 'utf-8');
+    console.log(`[tools] ndlocr-lite ${installed} を入れました（${formatElapsed(Date.now() - started)}）: ${command}`);
+
+    const oldCopy = path.join(toolsRoot, 'ndlocr-lite');
+    prefetchNdlocrModels(venvPython, path.join(oldCopy, 'src', 'model'));
+    if (fs.existsSync(path.join(oldCopy, 'src', 'ocr.py'))) {
+        console.log(`[tools] 前の版で GitHub から取った ndlocr-lite はもう使いません。要らなければ消してかまいません: ${oldCopy}`);
+    }
+    return { venvPython, command };
+}
+
+async function resolveNdlocrLiteUncached(settings: any = {}) {
     const configuredRepo = String(settings.repoPath || '').trim();
     const configuredPython = String(settings.pythonPath || '').trim();
 
-    if (configuredRepo && fs.existsSync(path.join(configuredRepo, 'src', 'ocr.py'))) {
-        // 指定された場所は書き換えない。古ければ知らせるだけ。
-        if (isNdlocrOlderThanMinimum(configuredRepo)) {
-            console.warn(`[tools] 設定の ndlocr-lite が ${NDLOCR_MIN_VERSION.join('.')} より古いようです: ${configuredRepo}`);
-        }
-        const pythonPath = configuredPython || ensureNdlocrVenv(configuredRepo, configuredPython);
-        return { repoPath: configuredRepo, pythonPath };
-    }
-
-    const repoPath = path.join(getToolsRoot(), 'ndlocr-lite');
-    const present = fs.existsSync(path.join(repoPath, 'src', 'ocr.py'));
-    if (!present || isNdlocrOlderThanMinimum(repoPath)) {
-        const downloadsDir = path.join(getToolsRoot(), 'downloads');
-        const zipPath = path.join(downloadsDir, 'ndlocr-lite.zip');
-        ensureDir(downloadsDir);
-
-        const stagingDir = `${repoPath}.staging-${process.pid}-${Date.now()}`;
-        try {
-            const sourceUrl = await getLatestNdlocrSourceUrl();
-            console.log(present
-                ? `[tools] ndlocr-liteが古いので ${NDLOCR_MIN_VERSION.join('.')} 以上に取り直します。`
-                : '[tools] ndlocr-liteを自動取得します。初回だけ時間がかかります。');
-            await downloadFile(sourceUrl, zipPath);
-            extractZipStrippingRoot(zipPath, stagingDir);
-            if (!fs.existsSync(path.join(stagingDir, 'src', 'ocr.py'))) {
-                throw new Error('展開したndlocr-lite内に src/ocr.py が見つかりませんでした');
+    if (configuredRepo) {
+        if (fs.existsSync(path.join(configuredRepo, 'src', 'ocr.py'))) {
+            // 自分で clone した ndlocr-lite は従来どおり src/ocr.py で動かす。指定された場所は書き換えない。古ければ知らせるだけ。
+            if (isNdlocrOlderThanMinimum(configuredRepo)) {
+                console.warn(`[tools] 設定の ndlocr-lite が ${NDLOCR_MIN_VERSION.join('.')} より古いようです: ${configuredRepo}`);
             }
-            fs.rmSync(repoPath, { recursive: true, force: true });
-            fs.renameSync(stagingDir, repoPath);
-            console.log(`[tools] ndlocr-liteを準備しました: ${repoPath}`);
-        } catch (err) {
-            // 取り直しに失敗しても、前の写しがあればそれで続ける（オフラインなど）。
-            if (!present) throw err;
-            console.warn(`[tools] ndlocr-liteを取り直せなかったので、今の写しを使います: ${err.message}`);
-        } finally {
-            fs.rmSync(stagingDir, { recursive: true, force: true });
+            const pythonPath = configuredPython || await ensureNdlocrRepoVenv(configuredRepo);
+            return { kind: 'repo', repoPath: configuredRepo, pythonPath };
         }
+        console.warn(`[tools] 設定の ndlocr-lite に src/ocr.py が無いので、PyPI 版を使います: ${configuredRepo}`);
     }
 
-    const pythonPath = ensureNdlocrVenv(repoPath, configuredPython);
-    return { repoPath, pythonPath };
+    // repoPath なしの pythonPath は、venv を作る元の Python として使う。
+    const { venvPython, command } = await ensureNdlocrPip(configuredPython);
+    return { kind: 'pip', command, pythonPath: venvPython };
+}
+
+// 並行して始まった読み取り（ai_ocr のジョブ）が同時に uv や ndlocr-lite を取りにいかないよう、準備中の約束を共有する。
+const ndlocrInFlight = new Map();
+
+/**
+ * ndlocr-lite の起動の仕方を決める（必要なら入れる）。
+ * - { kind: 'pip', command, pythonPath }: PyPI 版。command は venv の ndlocr-lite。
+ * - { kind: 'repo', repoPath, pythonPath }: 設定の repoPath（自分で clone した版）。python src/ocr.py で動かす。
+ */
+function resolveNdlocrLite(settings: any = {}) {
+    const key = JSON.stringify([getToolsRoot(), String(settings.repoPath || '').trim(), String(settings.pythonPath || '').trim()]);
+    let pending = ndlocrInFlight.get(key);
+    if (!pending) {
+        pending = resolveNdlocrLiteUncached(settings).finally(() => ndlocrInFlight.delete(key));
+        ndlocrInFlight.set(key, pending);
+    }
+    return pending;
 }
 
 function canImportReazonK2(pythonPath) {
@@ -743,4 +1020,14 @@ module.exports = {
     resolveNdlocrLite,
     resolveReazonK2,
     resolveVibeVoiceAsr,
+    // 試験用
+    _internal: {
+        UV_VERSION,
+        UV_PYTHON_VERSION,
+        NDLOCR_PIP_SPEC,
+        findSystemPython,
+        chooseNdlocrVenvBase,
+        ensureNdlocrVenvPython,
+        getUvRelease,
+    },
 };

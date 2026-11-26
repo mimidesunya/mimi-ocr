@@ -95,19 +95,33 @@ APIエラーが発生した処理は成功扱いにせず、文字起こし結�
 
 - `config.json` の `providers.claude.apiKey` を設定する
 
+## ndlocr-lite を入れられない（`ndlocr-lite を入れられませんでした` など）
+
+原因:
+
+- インターネットに繋がらず、PyPI の ndlocr-lite と依存パッケージ、uv、Python、文字認識モデルのどれかを取れなかった
+- 社内のプロキシなどで pip が PyPI に届かない
+- `config.json` の `tools.ndlocrLite.pythonPath` に指定した Python を起動できない、または 3.11 より古い
+- Linux など uv を自動で取らない OS で、Python 3.11 以上も uv も見つからない
+
+対処:
+
+- インターネット接続を確認して再実行する。ログの `[tools]` の行に、どこまで進んだかと保存先が出る
+- 外部ツール保存先の `ndlocr-lite-venv` フォルダを削除して再実行すると、入れ直す。uv で入れた Python は `uv-python`、uv 本体は `uv` にある
+- 読み取りの途中でモデルの取得に失敗する場合は、モデルの保存先（Windows では `%LOCALAPPDATA%\ndlocr-lite\models\v2`）を削除して再実行する
+- `pythonPath` を空にすると、PC の Python 3.11 以上か、uv で入れる Python を使う
+- Linux では Python 3.11 以上を入れるか、`curl -LsSf https://astral.sh/uv/install.sh | sh` で uv を入れる
+- 前の版で GitHub から取った外部ツール保存先の `ndlocr-lite` フォルダはもう使わないので、削除してかまわない
+
 ## `ndlocr-lite のリポジトリが見つかりません`
 
 原因:
 
-- 自動取得がネットワークエラーで失敗した
-- Python 3.11 以上を起動できない（ndlocr-lite 2.0.0 から 3.11 以上が要る）
-- `src/ocr.py` が見つからない
+- `config.json` の `tools.ndlocrLite.repoPath` に指定した場所から `src/ocr.py` が消えた（始めから無ければ PyPI 版を使う）
 
 対処:
 
-- `python --version` で Python 3.11 以上を起動できることを確認する
-- インターネット接続を確認して再実行する
-- GUIでは初回利用時にアプリ標準の保存先へ自動準備する。壊れている場合は、その保存先の `ndlocr-lite` フォルダを削除して再実行する
+- `repoPath` を自分で clone した ndlocr-lite の場所に直すか、空にして PyPI 版を使う
 
 ## 既存ファイルがあるためスキップされる
 

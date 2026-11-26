@@ -197,7 +197,7 @@ function writeReadme() {
     '',
     '初回設定:',
     '  - Gemini を使う場合は、画面上部の「APIキー」から取得手順を確認し、設定に APIキーを保存してください。',
-    '  - ndlocr-lite を使う場合は、初回実行時にアプリ標準の保存先へ GitHub から自動取得します。',
+    '  - ndlocr-lite を使う場合は、初回実行時にアプリ標準の保存先へ自動で入れます（Python が無い PC でも入ります。初回は数分かかります）。',
     '',
   ].join('\r\n');
   fs.writeFileSync(path.join(releaseRoot, 'README-START.txt'), text, 'utf-8');

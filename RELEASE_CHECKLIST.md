@@ -41,11 +41,13 @@
 
 - [ ] Windows で ffmpeg 自動取得
 - [ ] macOS で ffmpeg 未導入時の案内
-- [ ] `ndlocr-lite` 初回取得
+- [ ] `ndlocr-lite` 初回準備（空の外部ツール保存先で PyPI 版が `ndlocr-lite-venv` に入り、モデルを `%LOCALAPPDATA%\ndlocr-lite\models\v2` へ取り、`--ndlocr_only` で読める）
+- [ ] Python 3.11 以上が無い PC での `ndlocr-lite` 初回準備（uv が `uv`、Python 3.12 が `uv-python` に入る。`MIMI_TOOLS_IGNORE_SYSTEM_PYTHON=1` で PC の Python を探さずに試せる）
+- [ ] 前の版で GitHub 版の `ndlocr-lite` を取った外部ツール保存先から PyPI 版へ移る（依存パッケージを取り直さず、モデルは写す）
+- [ ] uv の版を上げたときは、`tool_resolver.ts` の `UV_RELEASE_ASSETS` の sha256 を配布元の `*.sha256` と照合
 - [ ] ReazonSpeech K2 / sherpa-onnx 初回準備
 - [ ] ReazonSpeech K2 モデル初回取得
-- [ ] Python 3.11 以上（`ndlocr-lite`）・3.10 以上（ReazonSpeech K2）の確認
-- [ ] `ndlocr-lite` venv 作成
+- [ ] Python 3.10 以上（ReazonSpeech K2）の確認
 - [ ] ネットワーク失敗時の表示
 
 ## Output Safety
