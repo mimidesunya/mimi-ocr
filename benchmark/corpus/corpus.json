@@ -1,0 +1,23 @@
+{
+  "note": "公開できる正解だけを載せる。裁判所サイトの判決 PDF は文字の層が原本どおり。合成書面は houhi で PDF にする（make の手順）。",
+  "documents": [
+    {
+      "name": "判決_令和6行ヒ362",
+      "url": "https://www.courts.go.jp/assets/hanrei/hanrei-pdf-95570.pdf",
+      "about": "最高裁令和8年2月20日第三小法廷判決（保有個人情報不開示決定処分取消請求事件）。令和8年の日付を含む"
+    },
+    {
+      "name": "判決_令和4行ヒ296",
+      "url": "https://www.courts.go.jp/assets/hanrei/hanrei-pdf-92448.pdf",
+      "about": "最高裁令和5年10月26日第一小法廷判決（情報不開示決定取消等請求事件）"
+    },
+    {
+      "name": "準備書面_日付と数字",
+      "make": "node <houhi>/dist/src/convert_to_pdf.js benchmark/corpus/準備書面_日付と数字.md（架空の事件）"
+    },
+    {
+      "name": "証拠説明書_表",
+      "make": "node <houhi>/dist/src/convert_to_pdf.js benchmark/corpus/証拠説明書_表.md（架空の事件）"
+    }
+  ]
+}

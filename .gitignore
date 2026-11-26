@@ -40,3 +40,7 @@ Desktop.ini
 .codex/
 AGENTS.md
 CLAUDE.md
+
+# ベンチ用の dist の写し・作業フォルダ
+.bench-dist/
+benchmark/work/
