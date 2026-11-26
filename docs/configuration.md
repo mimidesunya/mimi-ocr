@@ -152,14 +152,15 @@ ffmpeg / ffprobe は通常 `config.json` には書きません。PATH上の `ffm
 
 ### `tools.ndlocrLite`
 
-`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。標準値は `app.defaults.json` にあります。ndlocr-lite は PyPI 版を外部ツール保存先の `ndlocr-lite-venv`（専用の Python 環境）へ自動で入れます（[セットアップ](setup.md)）。
+`--ndlocr` / `--ndlocr_only` で使う外部OCRツールの調整値です。標準値は `app.defaults.json` にあります。ndlocr-lite は外部ツール保存先の `ndlocr-lite-venv`（専用の Python 環境）へ pip で自動で入れます（[セットアップ](setup.md)）。
 
 | キー | 必須 | 説明 |
 | --- | --- | --- |
+| `version` | 任意 | 入れる ndlocr-lite の版。`1.4.0`（既定。GitHub のタグから）または `2`（PyPI の 2.x）。裁判書類の横組みの表と FAX の画質では 1.4.0 のほうが正確だった（2.0 は表の狭い欄を崩し、FAX で日付を落とした）。頁に写真が入った資料を FAX の画質で読むと、1.4.0 は写真の部分に意味のない字の列を出すことがある。GUI の詳細設定の「ndlocr-liteの版」と同じ |
 | `parallelJobs` | 任意 | `auto` または数値 |
 | `pageChunkSize` | 任意 | ndlocr 1回の起動で処理するページ数 |
 | `imageDpi` | 任意 | PDF画像化の解像度（dpi） |
-| `repoPath` | 任意 | 自分で clone した ndlocr-lite の場所。指定すると PyPI 版の代わりに、その `src/ocr.py` で動かす |
+| `repoPath` | 任意 | 自分で clone した ndlocr-lite の場所。指定すると pip で入れる版の代わりに、その `src/ocr.py` で動かす（`version` は効かない。clone 側でタグを選ぶ） |
 | `pythonPath` | 任意 | `repoPath` と組みにすると、その Python で `src/ocr.py` を動かす。`repoPath` なしなら `ndlocr-lite-venv` を作る元の Python（3.11 以上） |
 
 補足:

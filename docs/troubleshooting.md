@@ -99,8 +99,8 @@ APIエラーが発生した処理は成功扱いにせず、文字起こし結�
 
 原因:
 
-- インターネットに繋がらず、PyPI の ndlocr-lite と依存パッケージ、uv、Python、文字認識モデルのどれかを取れなかった
-- 社内のプロキシなどで pip が PyPI に届かない
+- インターネットに繋がらず、ndlocr-lite（既定の 1.4.0 は GitHub、`version` が `2` なら PyPI）と依存パッケージ、uv、Python、文字認識モデルのどれかを取れなかった
+- 社内のプロキシなどで pip が GitHub や PyPI に届かない（GitHub に届かないときは、1.4.0 の zip を手元か社内に置き、環境変数 `MIMI_NDLOCR_LITE_1_4_URL` にその URL を入れると、そこから入れる）
 - `config.json` の `tools.ndlocrLite.pythonPath` に指定した Python を起動できない、または 3.11 より古い
 - Linux など uv を自動で取らない OS で、Python 3.11 以上も uv も見つからない
 
@@ -108,7 +108,7 @@ APIエラーが発生した処理は成功扱いにせず、文字起こし結�
 
 - インターネット接続を確認して再実行する。ログの `[tools]` の行に、どこまで進んだかと保存先が出る
 - 外部ツール保存先の `ndlocr-lite-venv` フォルダを削除して再実行すると、入れ直す。uv で入れた Python は `uv-python`、uv 本体は `uv` にある
-- 読み取りの途中でモデルの取得に失敗する場合は、モデルの保存先（Windows では `%LOCALAPPDATA%\ndlocr-lite\models\v2`）を削除して再実行する
+- 読み取りの途中でモデルの取得に失敗する場合は、モデルの保存先（Windows では `%LOCALAPPDATA%\ndlocr-lite\models\` の下の `v1.2`（1.4.0）か `v2`（2.x））を削除して再実行する
 - `pythonPath` を空にすると、PC の Python 3.11 以上か、uv で入れる Python を使う
 - Linux では Python 3.11 以上を入れるか、`curl -LsSf https://astral.sh/uv/install.sh | sh` で uv を入れる
 - 前の版で GitHub から取った外部ツール保存先の `ndlocr-lite` フォルダはもう使わないので、削除してかまわない
@@ -117,11 +117,11 @@ APIエラーが発生した処理は成功扱いにせず、文字起こし結�
 
 原因:
 
-- `config.json` の `tools.ndlocrLite.repoPath` に指定した場所から `src/ocr.py` が消えた（始めから無ければ PyPI 版を使う）
+- `config.json` の `tools.ndlocrLite.repoPath` に指定した場所から `src/ocr.py` が消えた（始めから無ければ pip で入れる版を使う）
 
 対処:
 
-- `repoPath` を自分で clone した ndlocr-lite の場所に直すか、空にして PyPI 版を使う
+- `repoPath` を自分で clone した ndlocr-lite の場所に直すか、空にして pip で入れる版（既定は 1.4.0）を使う
 
 ## 既存ファイルがあるためスキップされる
 

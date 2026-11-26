@@ -343,6 +343,12 @@ document.addEventListener('DOMContentLoaded', () => {
         (document.getElementById(id) as HTMLInputElement).value = String(value ?? '');
     }
 
+    // ndlocr-lite の版の欄。"2"・"2.0"・"2.0.0"・"pypi" は PyPI の 2.x、それ以外は既定の 1.4.0（tool_resolver の normalizeNdlocrLine と同じ）。
+    function ndlocrVersion(value: any) {
+        const text = String(value ?? '').trim().toLowerCase().replace(/^v/, '');
+        return (text === '2' || text.startsWith('2.') || text === 'pypi') ? '2' : '1.4.0';
+    }
+
     function positiveInt(value: any, fallback: number, min = 1, max = 999) {
         const parsed = Number.parseInt(String(value ?? ''), 10);
         if (!Number.isFinite(parsed) || parsed < min) return fallback;
@@ -492,6 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setInputValue('cfgClaudeChatModel', claude.chatModel || 'claude-opus-4-8');
 
         setInputValue('cfgToolsRootDir', toolsRootDir);
+        setInputValue('cfgNdlocrVersion', ndlocrVersion(ndlocrLite.version));
         setInputValue('cfgNdlocrParallelJobs', ndlocrLite.parallelJobs || 'auto');
         setInputValue('cfgNdlocrPageChunkSize', positiveInt(ndlocrLite.pageChunkSize, 8, 1, 200));
         setInputValue('cfgNdlocrImageDpi', positiveInt(ndlocrLite.imageDpi, 300, 72, 600));
@@ -681,6 +688,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ndlocrLite: any = {
             ...(previousNdlocr.repoPath ? { repoPath: previousNdlocr.repoPath } : {}),
             ...(previousNdlocr.pythonPath ? { pythonPath: previousNdlocr.pythonPath } : {}),
+            version: ndlocrVersion(inputValue('cfgNdlocrVersion')),
             parallelJobs: inputValue('cfgNdlocrParallelJobs') || 'auto',
             pageChunkSize: positiveInt(inputValue('cfgNdlocrPageChunkSize'), 8, 1, 200),
             imageDpi: positiveInt(inputValue('cfgNdlocrImageDpi'), 300, 72, 600),

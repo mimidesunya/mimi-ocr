@@ -61,6 +61,7 @@ const FALLBACK_APP_DEFAULTS = {
     tools: {
         rootDir: '',
         ndlocrLite: {
+            version: '1.4.0',
             parallelJobs: 'auto',
             pageChunkSize: 8,
             imageDpi: 300

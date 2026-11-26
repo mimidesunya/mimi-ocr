@@ -96,9 +96,9 @@ function makeFakeNdlocrWheel(wheelDir, version, modelCacheDir, models) {
     zip.writeZip(path.join(wheelDir, `ndlocr_lite-${version}-py3-none-any.whl`));
 }
 
-test('a configured ndlocr-lite repo with its own Python runs src/ocr.py as is, even when older than 2.0.0', async (t) => {
+test('a configured ndlocr-lite repo with its own Python runs src/ocr.py as is, even when older than 1.4.0', async (t) => {
     const root = makeTempRoot(t);
-    const repo = makeFakeRepo(root, '1.4.0', '# none\n');
+    const repo = makeFakeRepo(root, '1.3.1', '# none\n');
     const python = process.execPath; // 起動できる実行ファイルなら何でもよい（pythonPath を指定すると venv を作らない）
     const resolved = await resolveNdlocrLite({ repoPath: repo, pythonPath: python });
     assert.deepEqual(resolved, { kind: 'repo', repoPath: repo, pythonPath: python });
@@ -200,14 +200,36 @@ function skipWithoutPython(t) {
     return true;
 }
 
-test('PyPI ndlocr-lite is installed into the venv, its version is recorded, and it is reinstalled only out of range', async (t) => {
+test('the ndlocr-lite version setting picks 1.4.0 from GitHub by default and 2.x from PyPI on request', () => {
+    const { normalizeNdlocrLine, isNdlocrPipVersionInRange, NDLOCR_LINES, NDLOCR_LITE_1_4_URL } = _internal;
+    for (const value of [undefined, '', '1.4.0', '1.4', '1', 'v1.4.0', 'unknown']) {
+        assert.equal(normalizeNdlocrLine(value), '1.4', String(value));
+    }
+    for (const value of ['2', '2.0', '2.0.0', 'v2', 'PyPI']) {
+        assert.equal(normalizeNdlocrLine(value), '2', String(value));
+    }
+    assert.equal(NDLOCR_LINES['1.4'].spec(), `ndlocr-lite @ ${NDLOCR_LITE_1_4_URL}`);
+    assert.match(NDLOCR_LITE_1_4_URL, /^https:\/\/github\.com\/ndl-lab\/ndlocr-lite\/archive\/refs\/tags\/1\.4\.0\.zip$/);
+    assert.equal(NDLOCR_LINES['2'].spec(), 'ndlocr-lite>=2.0,<3');
+    assert.equal(isNdlocrPipVersionInRange([1, 4, 0], '1.4'), true);
+    assert.equal(isNdlocrPipVersionInRange([2, 0, 0], '1.4'), false);
+    assert.equal(isNdlocrPipVersionInRange([2, 0, 0], '2'), true);
+    assert.equal(isNdlocrPipVersionInRange([1, 4, 0], '2'), false);
+    assert.equal(isNdlocrPipVersionInRange(null, '1.4'), false);
+});
+
+test('pip ndlocr-lite is installed into the venv, its version is recorded, and it is reinstalled when the version line changes', async (t) => {
     const root = makeTempRoot(t);
     const toolsDir = path.join(root, 'tools');
     const wheelDir = path.join(root, 'wheels');
+    const wheel14Dir = path.join(root, 'wheel-1.4');
     const modelCache = path.join(root, 'model-cache');
+    // 1.4.0 は GitHub のタグの zip の代わりに、手元の wheel を指す（ネットワークに出ない）。
+    makeFakeNdlocrWheel(wheel14Dir, '1.4.0', modelCache, {});
     setEnv(t, {
         MIMI_TOOLS_DIR: toolsDir,
         MIMI_TOOLS_IGNORE_SYSTEM_PYTHON: undefined,
+        MIMI_NDLOCR_LITE_1_4_URL: require('node:url').pathToFileURL(path.join(wheel14Dir, 'ndlocr_lite-1.4.0-py3-none-any.whl')).href,
         PIP_NO_INDEX: '1',
         PIP_FIND_LINKS: wheelDir,
         PIP_DISABLE_PIP_VERSION_CHECK: '1',
@@ -222,16 +244,16 @@ test('PyPI ndlocr-lite is installed into the venv, its version is recorded, and 
     fs.writeFileSync(path.join(oldCopy, 'src', 'model', 'fake-det.onnx'), model);
     makeFakeNdlocrWheel(wheelDir, '2.0.0', modelCache, { det_weights: ['fake-det.onnx', sha256Hex(model)] });
 
+    // 既定は 1.4.0
     const first = await captureLogs(() => resolveNdlocrLite({}));
     const venvDir = path.join(toolsDir, 'ndlocr-lite-venv');
     const command = isWindows ? path.join(venvDir, 'Scripts', 'ndlocr-lite.exe') : path.join(venvDir, 'bin', 'ndlocr-lite');
     assert.equal(first.result.kind, 'pip');
     assert.equal(first.result.command, command);
     const marker = path.join(venvDir, '.mimi-installed');
-    assert.equal(fs.readFileSync(marker, 'utf-8'), 'ndlocr-lite==2.0.0');
-    assert.ok(first.lines.some(line => line.includes('ndlocr-lite 2.0.0 を入れました')), first.lines.join('\n'));
-    assert.ok(first.lines.some(line => line.includes('モデル（1個）を写します')), first.lines.join('\n'));
-    assert.deepEqual(fs.readFileSync(path.join(modelCache, 'fake-det.onnx')), model);
+    assert.equal(fs.readFileSync(marker, 'utf-8'), 'ndlocr-lite==1.4.0');
+    assert.ok(first.lines.some(line => line.includes('ndlocr-lite 1.4.0 を GitHub から入れます')), first.lines.join('\n'));
+    assert.ok(first.lines.some(line => line.includes('ndlocr-lite 1.4.0 を入れました')), first.lines.join('\n'));
     assert.ok(fs.existsSync(path.join(oldCopy, 'src', 'ocr.py')), 'the old GitHub copy is kept');
 
     // 入った ndlocr-lite が、作った引数で起動できる
@@ -240,21 +262,27 @@ test('PyPI ndlocr-lite is installed into the venv, its version is recorded, and 
     assert.match(run.stdout, /fake-ndlocr --sourcedir in-dir --output out-dir/);
 
     // 範囲内の印なら入れ直さない
-    const second = await captureLogs(() => resolveNdlocrLite({}));
+    const second = await captureLogs(() => resolveNdlocrLite({ version: '1.4.0' }));
     assert.deepEqual(second.result, first.result);
     assert.ok(!second.lines.some(line => line.includes('を入れました')), second.lines.join('\n'));
 
-    // 範囲を外れた印は入れ直す
-    fs.writeFileSync(marker, 'ndlocr-lite==1.4.0', 'utf-8');
-    const third = await captureLogs(() => resolveNdlocrLite({}));
-    assert.ok(third.lines.some(line => line.includes('を入れました')), third.lines.join('\n'));
+    // 版の設定を 2 にすると PyPI の 2.x へ入れ替え、モデルは前の写しから写す
+    const third = await captureLogs(() => resolveNdlocrLite({ version: '2' }));
+    assert.ok(third.lines.some(line => line.includes('2.x（PyPI）に入れ替えます')), third.lines.join('\n'));
     assert.equal(fs.readFileSync(marker, 'utf-8'), 'ndlocr-lite==2.0.0');
+    assert.ok(third.lines.some(line => line.includes('モデル（1個）を写します')), third.lines.join('\n'));
+    assert.deepEqual(fs.readFileSync(path.join(modelCache, 'fake-det.onnx')), model);
 
-    // 前の版の印（GitHub 版の requirements）は PyPI 版への入れ替え
-    fs.writeFileSync(marker, `requirements-sha256:${'0'.repeat(64)}`, 'utf-8');
+    // 既定に戻すと 1.4.0 に入れ替える
     const fourth = await captureLogs(() => resolveNdlocrLite({}));
-    assert.ok(fourth.lines.some(line => line.includes('PyPI 版') && line.includes('入れ替えます')), fourth.lines.join('\n'));
-    assert.equal(fs.readFileSync(marker, 'utf-8'), 'ndlocr-lite==2.0.0');
+    assert.ok(fourth.lines.some(line => line.includes('1.4.0（GitHub）に入れ替えます')), fourth.lines.join('\n'));
+    assert.equal(fs.readFileSync(marker, 'utf-8'), 'ndlocr-lite==1.4.0');
+
+    // 前の版の印（GitHub 版の requirements）も入れ替えの対象
+    fs.writeFileSync(marker, `requirements-sha256:${'0'.repeat(64)}`, 'utf-8');
+    const fifth = await captureLogs(() => resolveNdlocrLite({}));
+    assert.ok(fifth.lines.some(line => line.includes('入れ替えます')), fifth.lines.join('\n'));
+    assert.equal(fs.readFileSync(marker, 'utf-8'), 'ndlocr-lite==1.4.0');
 });
 
 test('ndlocr-lite venv is reinstalled when the configured repo requirements.txt changes', async (t) => {

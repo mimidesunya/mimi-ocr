@@ -41,9 +41,10 @@
 
 - [ ] Windows で ffmpeg 自動取得
 - [ ] macOS で ffmpeg 未導入時の案内
-- [ ] `ndlocr-lite` 初回準備（空の外部ツール保存先で PyPI 版が `ndlocr-lite-venv` に入り、モデルを `%LOCALAPPDATA%\ndlocr-lite\models\v2` へ取り、`--ndlocr_only` で読める）
+- [ ] `ndlocr-lite` 初回準備（空の外部ツール保存先で既定の 1.4.0 が GitHub から `ndlocr-lite-venv` に入り、モデルを `%LOCALAPPDATA%\ndlocr-lite\models\v1.2` へ取り、`--ndlocr_only` で読める）
+- [ ] `tools.ndlocrLite.version` を `2` にすると PyPI の 2.x へ入れ替わり（モデルは `models\v2`）、戻すと 1.4.0 に入れ替わる
 - [ ] Python 3.11 以上が無い PC での `ndlocr-lite` 初回準備（uv が `uv`、Python 3.12 が `uv-python` に入る。`MIMI_TOOLS_IGNORE_SYSTEM_PYTHON=1` で PC の Python を探さずに試せる）
-- [ ] 前の版で GitHub 版の `ndlocr-lite` を取った外部ツール保存先から PyPI 版へ移る（依存パッケージを取り直さず、モデルは写す）
+- [ ] 前の版で GitHub 版の `ndlocr-lite` を取った外部ツール保存先から pip 版へ移る（依存パッケージを取り直さず、モデルは写す）
 - [ ] uv の版を上げたときは、`tool_resolver.ts` の `UV_RELEASE_ASSETS` の sha256 を配布元の `*.sha256` と照合
 - [ ] ReazonSpeech K2 / sherpa-onnx 初回準備
 - [ ] ReazonSpeech K2 モデル初回取得

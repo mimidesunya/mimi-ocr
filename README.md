@@ -31,7 +31,7 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 - Windows x64 / macOS 推奨
 - 開発環境: Node.js / npm と `npm install` が通るローカル環境
 - Windows リリースパッケージ利用時: Node.js / npm は不要
-- `ndlocr-lite` は初回利用時に PyPI 版をアプリ標準の保存先へ自動で入れる（Python 3.11 以上が無い PC では uv で Python 3.12 も入れるので、Python を自分で入れなくてよい。初回は部品とモデルを合わせて約260MB取るので数分かかる）
+- `ndlocr-lite` は初回利用時に 1.4.0（GitHub のタグ）をアプリ標準の保存先へ自動で入れる。裁判書類の表と FAX の画質では 2.0 より正確だったため。設定の `tools.ndlocrLite.version` を `2` にすると PyPI の 2.x を使う（Python 3.11 以上が無い PC では uv で Python 3.12 も入れるので、Python を自分で入れなくてよい。初回は部品とモデルを合わせて約260MB取るので数分かかる）
 - ReazonSpeech K2 を使う場合は Python 3.10 以上（初回利用時に `reazonspeech.k2.asr` と `sherpa-onnx` を専用 venv へ自動準備）
 - macOS で無音カットや音声変換を使う場合は ffmpeg（例: `brew install ffmpeg`）
 - Windowsランチャーを小さく作る場合は MinGW-w64 の `gcc` / `windres`

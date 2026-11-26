@@ -31,9 +31,9 @@ GUI上部の「設定」からAPIキーやモデル名の上書きを設定で�
 
 法匪モードは同梱テンプレートを使うため、追加設定は不要です。ffmpeg は Windows では外部ツール保存先へ自動準備し、macOS では PATH 上の `ffmpeg` / `ffprobe` を使います。
 
-ndlocr-lite は初回使用時に、PyPI 版（`ndlocr-lite>=2.0,<3`）を外部ツール保存先の `ndlocr-lite-venv`（専用の Python 環境）へ自動で入れます。PC に Python 3.11 以上があればそれで環境を作り、無ければ版を固定した [uv](https://github.com/astral-sh/uv) を外部ツール保存先の `uv` に取り（配布元の sha256 で確かめます）、uv で Python 3.12 を `uv-python` に入れてから環境を作ります。uv で入れた Python は PATH にも Windows のレジストリにも登録しないので、PC のほかの設定は変わりません。
+ndlocr-lite は初回使用時に、1.4.0（GitHub のタグの zip。git は要りません）を外部ツール保存先の `ndlocr-lite-venv`（専用の Python 環境）へ pip で自動で入れます。2026-11 の比較で、裁判書類の横組みの表と FAX の画質では 1.4.0 のほうが 2.0 より正確だったためです（縦組みの本文は同じくらい）。`config.json` の `tools.ndlocrLite.version` を `2` にすると、PyPI 版（`ndlocr-lite>=2.0,<3`）を入れます。版を替えると、次の実行で入れ替えます。PC に Python 3.11 以上があればそれで環境を作り、無ければ版を固定した [uv](https://github.com/astral-sh/uv) を外部ツール保存先の `uv` に取り（配布元の sha256 で確かめます）、uv で Python 3.12 を `uv-python` に入れてから環境を作ります。uv で入れた Python は PATH にも Windows のレジストリにも登録しないので、PC のほかの設定は変わりません。
 
-初回は依存パッケージ（onnxruntime、OpenCV など）を約100MB、文字認識モデルを4つで約160MB取るので、回線にもよりますが数分かかります。入れたあとの大きさは、Python 環境が約350MB、モデルが約150MBです。uv で Python を入れる場合は、uv（取得約16MB、置くと約31MB）と Python 3.12（取得約21MB、置くと約69MB）が加わります。モデルは ndlocr-lite の決まりで、Windows では `%LOCALAPPDATA%\ndlocr-lite\models\v2`、macOS では `~/Library/Caches/ndlocr-lite/models/v2` に置かれます。前の版で GitHub から取った外部ツール保存先の `ndlocr-lite` フォルダは消さずに残しますが、もう使いません。そこにあるモデルは取り直さずに写し、入っている依存パッケージもそのまま使うので、移るときの取得は ndlocr-lite 本体だけで済みます。
+初回は依存パッケージ（onnxruntime、OpenCV など）を約100MB、文字認識モデルを4つで約160MB取るので、回線にもよりますが数分かかります。入れたあとの大きさは、Python 環境が約350MB、モデルが約150MBです。uv で Python を入れる場合は、uv（取得約16MB、置くと約31MB）と Python 3.12（取得約21MB、置くと約69MB）が加わります。モデルは ndlocr-lite の決まりで、Windows では `%LOCALAPPDATA%\ndlocr-lite\models\` の下（1.4.0 は `v1.2`、2.x は `v2`）、macOS では `~/Library/Caches/ndlocr-lite/models/` の下に置かれます。前の版で GitHub から取った外部ツール保存先の `ndlocr-lite` フォルダは消さずに残しますが、もう使いません。そこにあるモデルは取り直さずに写し、入っている依存パッケージもそのまま使うので、移るときの取得は ndlocr-lite 本体だけで済みます。
 
 自分で clone した ndlocr-lite を使いたい場合は、`config.json` の `tools.ndlocrLite.repoPath` にその場所を指定してください。従来どおり `src/ocr.py` で動かし、`pythonPath` も指定すればその Python で、指定しなければ `ndlocr-lite-venv` に `requirements.txt` を入れて動かします。
 

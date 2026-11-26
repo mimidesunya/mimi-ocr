@@ -9,18 +9,46 @@ const { getProjectRoot, loadConfig } = require('./gemini_client');
 
 const FFMPEG_ZIP_URL = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip';
 const FFMPEG_SHA_URL = `${FFMPEG_ZIP_URL}.sha256`;
-// 設定で指定された ndlocr-lite がこれより古ければ知らせる（2.0.0 でモデルのファイル名と依存が変わった）。
-const NDLOCR_MIN_VERSION = [2, 0, 0];
-// ndlocr-lite 2.0.0 の CLI は Python 3.11 以上（pyproject の requires-python、Pillow 13）。
+// 設定で指定された ndlocr-lite がこれより古ければ知らせる（1.4.0 から pip で入れられる形になり、--sourcepdf・--pdf-output・--json-only がそろった）。
+const NDLOCR_MIN_VERSION = [1, 4, 0];
+// ndlocr-lite 1.4.0・2.0.0 の CLI は Python 3.11 以上（pyproject の requires-python）。
 const NDLOCR_MIN_PYTHON = [3, 11];
-// PyPI 版 ndlocr-lite を入れる範囲。入っている版がこの範囲を外れたら入れ直す。
-const NDLOCR_PIP_SPEC = 'ndlocr-lite>=2.0,<3';
-const NDLOCR_PIP_MIN = [2, 0, 0];
-const NDLOCR_PIP_BELOW = [3, 0, 0];
+// 入れる ndlocr-lite の系統（設定 tools.ndlocrLite.version）。入っている版がその範囲を外れたら入れ直す。
+// 既定は 1.4.0。2026-11-26 に裁判書類（準備書面・証拠説明書・判決、スキャン相当と FAX 相当の27頁）を
+// ndlocr だけで読ませた比較で、2.0.0 は横組みの表の狭い欄を崩してもっともらしい誤った数字を出し、
+// FAX の画質で日付を落とした（欠落 1.4.0 5.03% / 2.0.0 6.51%）。縦組みの本文は同じくらいで、
+// 頁に入った写真を FAX の画質で読むと 1.4.0 は意味のない字の列を出す（2.0.0 は出さない）。
+// PyPI には 2.x しかないので、1.4.0 は GitHub のタグの zip から入れる（git は要らない）。
+// MIMI_NDLOCR_LITE_1_4_URL で入れ先を差し替えられる（試験・ミラー用。pip が受け付ける URL かファイルの URL）。
+const NDLOCR_LITE_1_4_URL = 'https://github.com/ndl-lab/ndlocr-lite/archive/refs/tags/1.4.0.zip';
+const NDLOCR_LINES = {
+    '1.4': {
+        label: '1.4.0',
+        from: 'GitHub',
+        min: [1, 4, 0],
+        below: [1, 5, 0],
+        spec: () => `ndlocr-lite @ ${String(process.env.MIMI_NDLOCR_LITE_1_4_URL || '').trim() || NDLOCR_LITE_1_4_URL}`,
+    },
+    '2': {
+        label: '2.x',
+        from: 'PyPI',
+        min: [2, 0, 0],
+        below: [3, 0, 0],
+        spec: () => 'ndlocr-lite>=2.0,<3',
+    },
+};
+const NDLOCR_DEFAULT_LINE = '1.4';
+
+// 設定の版（"1.4.0"・"1.4"・"2"・"2.0.0"・"pypi" など）を系統の鍵にする。分からなければ既定。
+function normalizeNdlocrLine(value) {
+    const text = String(value ?? '').trim().toLowerCase().replace(/^v/, '');
+    if (text === '2' || text.startsWith('2.') || text === 'pypi') return '2';
+    return NDLOCR_DEFAULT_LINE;
+}
 // ndlocr-lite の依存（onnxruntime、OpenCV、numpy など）の取得量と、入れた venv の大きさ（2.0.0、Windows x64 で実測 95MB・354MB）。
 const NDLOCR_PIP_DOWNLOAD_APPROX_MB = 100;
 const NDLOCR_VENV_APPROX_MB = 350;
-// PyPI 版が初回に取る文字認識モデル1つの大きさ（2.0.0 は4つで約157MB）。
+// pip 版が初回に取る文字認識モデル1つの大きさ（1.4.0・2.0.0 とも4つで約157MB）。
 const NDLOCR_MODEL_APPROX_MB = 40;
 // Python 3.11 以上が無い PC では、uv（astral-sh/uv の単体の実行ファイル）で外部ツール保存先へ Python を入れる。
 const UV_VERSION = '0.13.8';
@@ -627,16 +655,17 @@ async function ensureNdlocrRepoVenv(repoPath) {
     return venvPython;
 }
 
-// 印に書いた PyPI 版の版（"ndlocr-lite==2.0.0"）。前の版の印（requirements の sha256、日時）なら null。
+// 印に書いた pip 版の版（"ndlocr-lite==1.4.0"・"ndlocr-lite==2.0.0"）。前の版の印（requirements の sha256、日時）なら null。
 function readNdlocrPipMarker(markerPath) {
     const match = readTextIfExists(markerPath).match(/^ndlocr-lite==(\S+)$/);
     return match ? parseVersionNumbers(match[1]) : null;
 }
 
-function isNdlocrPipVersionInRange(version) {
+function isNdlocrPipVersionInRange(version, lineKey = NDLOCR_DEFAULT_LINE) {
+    const line = NDLOCR_LINES[lineKey] || NDLOCR_LINES[NDLOCR_DEFAULT_LINE];
     return !!version
-        && compareVersionNumbers(version, NDLOCR_PIP_MIN) >= 0
-        && compareVersionNumbers(version, NDLOCR_PIP_BELOW) < 0;
+        && compareVersionNumbers(version, line.min) >= 0
+        && compareVersionNumbers(version, line.below) < 0;
 }
 
 function readInstalledNdlocrVersion(venvPython) {
@@ -650,7 +679,7 @@ function readInstalledNdlocrVersion(venvPython) {
     return String(result.stdout || '').trim();
 }
 
-// PyPI 版のモデル（model_download.MODELS）を OS のキャッシュ（Windows は %LOCALAPPDATA%\ndlocr-lite\models\v2）へ先に取る。
+// pip 版のモデル（model_download.MODELS）を OS のキャッシュ（Windows は %LOCALAPPDATA%\ndlocr-lite\models の下）へ先に取る。1.4.0 も 2.x も同じ作り。
 // 前の版で GitHub から取った ndlocr-lite の src/model に同じモデルがあれば、取らずに写す。
 // 出力は最後の行の JSON: {"cache": 保存先, "missing": [{"name", "seed": 写せるか}]}（"fetch" では取る前の状態）。
 const NDLOCR_MODEL_SCRIPT = [
@@ -727,27 +756,29 @@ function prefetchNdlocrModels(venvPython, seedDir) {
     }
 }
 
-// PyPI 版 ndlocr-lite を外部ツール保存先の ndlocr-lite-venv に入れる。
-// 前の版で GitHub 版の依存を入れた venv はそのまま使い、ndlocr-lite だけを足す（依存は同じ版なので取り直さない）。
-async function ensureNdlocrPip(configuredBasePython = '') {
+// ndlocr-lite（設定の系統。既定は GitHub の 1.4.0、"2" なら PyPI の 2.x）を外部ツール保存先の ndlocr-lite-venv に pip で入れる。
+// 前の版で GitHub 版の依存を入れた venv はそのまま使い、ndlocr-lite だけを足す（依存は取り直さない）。系統を替えれば入れ替える。
+async function ensureNdlocrPip(configuredBasePython = '', lineKey = NDLOCR_DEFAULT_LINE) {
+    const line = NDLOCR_LINES[lineKey] || NDLOCR_LINES[NDLOCR_DEFAULT_LINE];
+    const spec = line.spec();
     const toolsRoot = getToolsRoot();
     const venvDir = path.join(toolsRoot, 'ndlocr-lite-venv');
     const markerPath = path.join(venvDir, '.mimi-installed');
     const venvPython = await ensureNdlocrVenvPython(venvDir, configuredBasePython);
     const command = getVenvScriptPath(venvDir, 'ndlocr-lite');
 
-    if (isNdlocrPipVersionInRange(readNdlocrPipMarker(markerPath)) && isExecutableFile(command)) {
+    if (isNdlocrPipVersionInRange(readNdlocrPipMarker(markerPath), lineKey) && isExecutableFile(command)) {
         return { venvPython, command };
     }
 
     console.log(fs.existsSync(markerPath)
-        ? `[tools] ndlocr-liteを PyPI 版（${NDLOCR_PIP_SPEC}）に入れ替えます。入っている依存パッケージはそのまま使います。`
-        : `[tools] ndlocr-lite（${NDLOCR_PIP_SPEC}）を PyPI から入れます。初回だけ、依存パッケージを約${NDLOCR_PIP_DOWNLOAD_APPROX_MB}MB取り（入れると約${NDLOCR_VENV_APPROX_MB}MB）、数分かかります: ${venvDir}`);
+        ? `[tools] ndlocr-liteを ${line.label}（${line.from}）に入れ替えます。入っている依存パッケージはそのまま使います: ${spec}`
+        : `[tools] ndlocr-lite ${line.label} を ${line.from} から入れます。初回だけ、依存パッケージを約${NDLOCR_PIP_DOWNLOAD_APPROX_MB}MB取り（入れると約${NDLOCR_VENV_APPROX_MB}MB）、数分かかります: ${venvDir}`);
     const started = Date.now();
-    runChecked(venvPython, ['-m', 'pip', 'install', '--disable-pip-version-check', NDLOCR_PIP_SPEC], toolsRoot);
+    runChecked(venvPython, ['-m', 'pip', 'install', '--disable-pip-version-check', spec], toolsRoot);
     const installed = readInstalledNdlocrVersion(venvPython);
-    if (!isNdlocrPipVersionInRange(parseVersionNumbers(installed)) || !isExecutableFile(command)) {
-        throw new Error(`ndlocr-lite を入れられませんでした（入った版: ${installed || '不明'}）。上の pip の表示を確認してください。`);
+    if (!isNdlocrPipVersionInRange(parseVersionNumbers(installed), lineKey) || !isExecutableFile(command)) {
+        throw new Error(`ndlocr-lite ${line.label} を入れられませんでした（入った版: ${installed || '不明'}）。上の pip の表示を確認してください。`);
     }
     fs.writeFileSync(markerPath, `ndlocr-lite==${installed}`, 'utf-8');
     console.log(`[tools] ndlocr-lite ${installed} を入れました（${formatElapsed(Date.now() - started)}）: ${command}`);
@@ -773,11 +804,11 @@ async function resolveNdlocrLiteUncached(settings: any = {}) {
             const pythonPath = configuredPython || await ensureNdlocrRepoVenv(configuredRepo);
             return { kind: 'repo', repoPath: configuredRepo, pythonPath };
         }
-        console.warn(`[tools] 設定の ndlocr-lite に src/ocr.py が無いので、PyPI 版を使います: ${configuredRepo}`);
+        console.warn(`[tools] 設定の ndlocr-lite に src/ocr.py が無いので、pip で入れた版を使います: ${configuredRepo}`);
     }
 
     // repoPath なしの pythonPath は、venv を作る元の Python として使う。
-    const { venvPython, command } = await ensureNdlocrPip(configuredPython);
+    const { venvPython, command } = await ensureNdlocrPip(configuredPython, normalizeNdlocrLine(settings.version));
     return { kind: 'pip', command, pythonPath: venvPython };
 }
 
@@ -786,11 +817,11 @@ const ndlocrInFlight = new Map();
 
 /**
  * ndlocr-lite の起動の仕方を決める（必要なら入れる）。
- * - { kind: 'pip', command, pythonPath }: PyPI 版。command は venv の ndlocr-lite。
+ * - { kind: 'pip', command, pythonPath }: pip で venv に入れた版（既定は GitHub の 1.4.0、設定 version が "2" なら PyPI の 2.x）。command は venv の ndlocr-lite。
  * - { kind: 'repo', repoPath, pythonPath }: 設定の repoPath（自分で clone した版）。python src/ocr.py で動かす。
  */
 function resolveNdlocrLite(settings: any = {}) {
-    const key = JSON.stringify([getToolsRoot(), String(settings.repoPath || '').trim(), String(settings.pythonPath || '').trim()]);
+    const key = JSON.stringify([getToolsRoot(), String(settings.repoPath || '').trim(), String(settings.pythonPath || '').trim(), normalizeNdlocrLine(settings.version)]);
     let pending = ndlocrInFlight.get(key);
     if (!pending) {
         pending = resolveNdlocrLiteUncached(settings).finally(() => ndlocrInFlight.delete(key));
@@ -1024,7 +1055,10 @@ module.exports = {
     _internal: {
         UV_VERSION,
         UV_PYTHON_VERSION,
-        NDLOCR_PIP_SPEC,
+        NDLOCR_LINES,
+        NDLOCR_LITE_1_4_URL,
+        normalizeNdlocrLine,
+        isNdlocrPipVersionInRange,
         findSystemPython,
         chooseNdlocrVenvBase,
         ensureNdlocrVenvPython,

@@ -5,7 +5,7 @@ const { getToolConfig } = require('./gemini_client');
 const { resolveNdlocrLite } = require('./tool_resolver');
 
 /**
- * ndlocr-lite に渡す引数（入力・出力と追加の指定）。起動の仕方（PyPI 版か src/ocr.py か）には依らない。
+ * ndlocr-lite に渡す引数（入力・出力と追加の指定）。起動の仕方（pip 版か src/ocr.py か）にも版（1.4.0・2.x）にも依らない。
  * @param {string} sourcePath Path to an image file, a directory containing images, or a PDF.
  * @param {string} destDir Path to the output directory where ndlocr will save results.
  * @param {boolean|string} isDir True if sourcePath is a directory, 'pdf' for a PDF (--sourcepdf).
@@ -26,7 +26,7 @@ function buildNdlocrArgs(sourcePath, destDir, isDir: boolean | string = false, e
 
 /**
  * ndlocr-lite の起動の仕方（実行ファイル・先頭の引数・作業フォルダ）。
- * PyPI 版は venv の ndlocr-lite を、設定の repoPath（自分で clone した版）は python src/ocr.py を使う。
+ * pip 版（既定は 1.4.0、設定 version が "2" なら PyPI の 2.x）は venv の ndlocr-lite を、設定の repoPath（自分で clone した版）は python src/ocr.py を使う。
  */
 function getNdlocrLaunch(resolved) {
     if (resolved.kind === 'repo') {
