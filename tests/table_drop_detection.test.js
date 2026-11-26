@@ -5,6 +5,8 @@ const {
     describesTableWithoutTranscribing,
     findDroppedTablePages,
     getOcrPrompt,
+    getRawTextFormattingPrompt,
+    getTodayDateInstruction,
 } = require('../dist/src/lib/ai_ocr.js');
 
 const DESCRIBED_TABLE_PAGE = [
@@ -64,4 +66,18 @@ test('OCRプロンプトが表の書き起こしを明示している', () => {
     assert.match(prompt, /\*\*Tables\*\*/);
     assert.match(prompt, /Markdown table/);
     assert.match(prompt, /never use it in place of a table/);
+});
+
+test('OCRプロンプトが今日の日付を伝え、年を直さないよう指示している', () => {
+    const note = getTodayDateInstruction(new Date(2026, 10, 14));
+    assert.match(note, /今日は令和8年（2026年）11月14日。令和8年11月までの日付は実在する過去の日付なので、年を直したり印を付けたりしない。/);
+    assert.match(getTodayDateInstruction(new Date(2019, 4, 1)), /今日は令和元年（2019年）5月1日。令和元年5月まで/);
+    const beforeReiwa = getTodayDateInstruction(new Date(2019, 3, 30));
+    assert.match(beforeReiwa, /今日は2019年4月30日。2019年4月まで/);
+    assert.doesNotMatch(beforeReiwa, /令和/);
+
+    const today = getTodayDateInstruction();
+    assert.ok(getOcrPrompt(4, '').includes(today));
+    // ndlocr-lite の前処理の後に送る整形の指示にも入る。
+    assert.ok(getRawTextFormattingPrompt('').includes(today));
 });

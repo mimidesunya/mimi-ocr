@@ -34,13 +34,40 @@ function formatTime(ms) {
  */
 const NO_TEXT_NOTE = '(--! 文字なし)';
 
+const REIWA_START = new Date(2019, 4, 1);
+
+/**
+ * 今日の日付を AI に知らせる段。
+ *
+ * 日付を知らないモデル（gemini-3.8-flash など）は「令和8年」を未来の年とみなし、
+ * 「明らかな誤りは直す」の指示に従って令和6年に直したり `(-- as is)` を付けたりする。
+ * 書面の日付が印もなくずれるのを防ぐため、すべての OCR プロンプトに入れる。
+ */
+// 文言は 2026-11-14 の比較で --context-text に渡して効き目を確かめた文に合わせている。
+function getTodayDateInstruction(now = new Date()) {
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const reiwaYear = year - 2018;
+    const yearLabel = now.getTime() >= REIWA_START.getTime()
+        ? `令和${reiwaYear === 1 ? '元' : reiwaYear}年`
+        : `${year}年`;
+    const todayLabel = yearLabel === `${year}年`
+        ? `${year}年${month}月${day}日`
+        : `${yearLabel}（${year}年）${month}月${day}日`;
+    return `
+# TODAY
+今日は${todayLabel}。${yearLabel}${month}月までの日付は実在する過去の日付なので、年を直したり印を付けたりしない。
+`;
+}
+
 function getOcrPrompt(numPages, contextInstruction = "") {
     return `
 # ROLE
 High-precision OCR engine converting Japanese PDF pages to clean Markdown.
 
 ${contextInstruction}
-
+${getTodayDateInstruction()}
 # INPUT
 ${numPages} pages of a Japanese document.
 
@@ -75,7 +102,7 @@ function getWordPrompt(contextInstruction = "") {
 High-precision document transcribing engine converting Japanese Word (.docx) content (XML and associated images) to clean Markdown.
 
 ${contextInstruction}
-
+${getTodayDateInstruction()}
 # INPUT
 The following parts represent a Japanese Word (.docx) document:
 1. **XML Content**: The raw \`word/document.xml\` containing text and structural tags.
@@ -103,7 +130,7 @@ function getDocTextPrompt(contextInstruction = "") {
 High-precision document formatting engine converting extracted Japanese Word (.doc) text to clean Markdown.
 
 ${contextInstruction}
-
+${getTodayDateInstruction()}
 # INPUT
 Plain text extracted from a Japanese Word (.doc) document. The text structure may be somewhat degraded due to the extraction process.
 
@@ -1091,7 +1118,7 @@ function getRawTextFormattingPrompt(contextInstruction = "") {
 High-precision document formatting engine converting raw OCR text to clean Markdown.
 
 ${contextInstruction}
-
+${getTodayDateInstruction()}
 # INPUT
 Raw text extracted by an OCR engine, separated by page markers. The content may contain some OCR errors or formatting artifacts.
 
@@ -2418,7 +2445,7 @@ function getPptxPrompt(contextInstruction = "") {
 High-precision document transcribing engine converting Japanese PowerPoint (.pptx) slide content (XML and associated images) to clean Markdown.
 
 ${contextInstruction}
-
+${getTodayDateInstruction()}
 # INPUT
 The following parts represent a Japanese PowerPoint (.pptx) presentation:
 1. **XML Content**: The raw slide XML files containing text and structural tags.
@@ -2609,6 +2636,8 @@ module.exports = {
     pptxToText,
     imageToText,
     getOcrPrompt,
+    getRawTextFormattingPrompt,
+    getTodayDateInstruction,
     estimateRequestsPayloadBytes,
     applyOcrBatchTextResult,
     confirmRepeatedEmptyPdfPages,
