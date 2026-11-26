@@ -428,7 +428,8 @@ test('PDF OCR switches models on refusal and falls back to text without AI when 
                     return {
                         response: {
                             candidates: [{
-                                content: { parts: [{ text: '### -- Begin Page 1 --\n\nAccepted by AI.\n\n### -- End --' }] },
+                                // 埋め込みテキストより極端に短いと取りこぼしとみなして読み直すので、本文も返す。
+                                content: { parts: [{ text: `### -- Begin Page 1 --\n\nAccepted by AI. ${texts[0]}\n\n### -- End --` }] },
                                 finishReason: 'STOP'
                             }]
                         },

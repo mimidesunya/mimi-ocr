@@ -19,10 +19,10 @@
   },
   "ocr": {
     "provider": "gemini",
-    "target": "general",
+    "target": "auto",
     "mode": "sync",
     "batchSize": 4,
-    "ndlocr": "pre",
+    "ndlocr": "hint",
     "preferPdfText": false,
     "autoRename": false,
     "skipFormattedRename": false
@@ -87,6 +87,28 @@
       "cCompiler": "",
       "cxxCompiler": "",
       "makePath": ""
+    }
+  },
+  "pricing": {
+    "asOf": "2026-11-26",
+    "note": "100万トークンあたりの米ドル。概算に使う。正しい単価は各社の料金ページで確かめ、config.json の pricing.models で上書きできる。gemini-3.8-flash は定価（2026-12-31 までの導入価格 0.75/3.75 は反映していない）。",
+    "models": {
+      "gemini-3.1-flash-lite": {
+        "inputPerMTok": 0.25,
+        "outputPerMTok": 1.5
+      },
+      "gemini-3.5-flash-lite": {
+        "inputPerMTok": 0.3,
+        "outputPerMTok": 2.5
+      },
+      "gemini-3-flash-preview": {
+        "inputPerMTok": 0.5,
+        "outputPerMTok": 3
+      },
+      "gemini-3.8-flash": {
+        "inputPerMTok": 1.5,
+        "outputPerMTok": 7.5
+      }
     }
   }
 }

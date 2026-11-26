@@ -156,7 +156,14 @@ class ClaudeOcrProcessor {
                                             .filter(c => c.type === 'text')
                                             .map(c => ({ text: c.text }))
                                     }
-                                }]
+                                }],
+                                // 費用の集計のため、利用量を Gemini 形式でも残す。
+                                usageMetadata: response.usage ? {
+                                    promptTokenCount: Number(response.usage.input_tokens || 0)
+                                        + Number(response.usage.cache_read_input_tokens || 0)
+                                        + Number(response.usage.cache_creation_input_tokens || 0),
+                                    candidatesTokenCount: Number(response.usage.output_tokens || 0)
+                                } : undefined
                             }
                         };
                         success = true;

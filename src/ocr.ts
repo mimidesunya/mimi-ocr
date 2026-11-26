@@ -45,11 +45,11 @@ const fs = require('fs');
 const path = require('path');
 const { pdfToText, docToText, docxToText, odtToText, pptxToText, imageToText, getOcrPrompt } = require('./lib/ai_ocr');
 const { maybeAutoRenameDocument } = require('./lib/auto_rename');
-const { loadConfig, getProviderModel, setProviderModelOverride } = require('./lib/gemini_client');
+const { loadConfig, getProviderModel, setProviderModelOverride, hasProviderApiKey } = require('./lib/gemini_client');
+const { detectOcrTarget } = require('./lib/doc_type');
 const { getBatchFileLimits, getFileSize, runWithinBudget } = require('./lib/file_scheduler');
 const {
     parsePositiveInt,
-    normalizeTarget,
     normalizeMode,
     readOptionalTextFile,
     compactTextParts,
@@ -75,6 +75,7 @@ function normalizeProvider(value) {
 
 function normalizeNdlocrMode(value) {
     const mode = String(value || '').toLowerCase().replace(/-/g, '_');
+    if (['hint', 'ndlocr_hint', 'image_hint'].includes(mode)) return 'hint';
     if (['pre', 'ndlocr', 'ndlocr_ai', 'on', 'true'].includes(mode)) return 'pre';
     if (['only', 'ndlocr_only'].includes(mode)) return 'only';
     return 'off';
@@ -95,7 +96,7 @@ function buildHouhiStyle(contextFilePath, contextText = '') {
 
     return `
 # TARGET OUTPUT STYLE
-Follow the structure and formatting of this example:
+Follow the structure and formatting of this example. The example shows formatting only: never copy its words, names, case numbers or headings into the output, and transcribe only what the document itself shows.
 
 ${sampleContent}
 ${buildAdditionalContextInstruction(contextText)}
@@ -108,6 +109,25 @@ ${buildAdditionalContextInstruction(contextText)}
 `;
 }
 
+// 出力の型。auto は文書ごとに裁判書面かを判定する（PDF は pdfToText の中で、Word は本文から）。
+function normalizeOcrTarget(value, fallback = 'auto') {
+    const target = String(value || '').trim().toLowerCase();
+    if (target === 'houhi' || target === 'general' || target === 'auto') return target;
+    return fallback;
+}
+
+function readDocxSampleText(filePath) {
+    try {
+        const AdmZip = require('adm-zip');
+        const xml = String(new AdmZip(filePath).readAsText('word/document.xml') || '');
+        return xml.replace(/<\/w:p>/g, '\n').replace(/<[^>]+>/g, '').slice(0, 4000);
+    } catch (_e) {
+        return '';
+    }
+}
+
+const NDLOCR_ONLY_PDF_MESSAGE = 'ndlocr のみ（無料）で読めるのは PDF だけです。Word・PowerPoint・画像を読むには AI の API キーを設定してください';
+
 // ---- メイン処理 ----
 
 async function main() {
@@ -116,7 +136,7 @@ async function main() {
     const ocrConfig = config.ocr || {};
     const inputPaths = [];
     let failedCount = 0;
-    let target = normalizeTarget(ocrConfig.target);
+    let target = normalizeOcrTarget(ocrConfig.target);
     let contextFilePath = ocrConfig.houhiTemplatePath || null;
     let contextText = compactTextParts(
         ocrConfig.contextText,
@@ -130,14 +150,20 @@ async function main() {
     let aiModelOverride = '';
     let processMode = normalizeMode(ocrConfig.mode);
     const defaultNdlocrMode = normalizeNdlocrMode(ocrConfig.ndlocr);
-    let useNdlocr = defaultNdlocrMode === 'pre' || defaultNdlocrMode === 'only';
+    let useNdlocr = defaultNdlocrMode !== 'off';
     let ndlocrOnly = defaultNdlocrMode === 'only';
+    let ndlocrHint = defaultNdlocrMode === 'hint';
+    let ndlocrModeExplicit = false;
     let preferPdfText = ocrConfig.preferPdfText === true;
+    // 照合: 未指定なら ndlocr の読みがあるときに行う。true なら画像だけで読んだときも ndlocr を回して行う。
+    let crossCheck = typeof ocrConfig.crossCheck === 'boolean' ? ocrConfig.crossCheck : undefined;
+    // 検索できる PDF（元の PDF に ndlocr の読みを見えない文字で重ねる）。未指定なら無料の道（ndlocr のみ）で作る。
+    let searchablePdf = typeof ocrConfig.searchablePdf === 'boolean' ? ocrConfig.searchablePdf : undefined;
     let autoRename = ocrConfig.autoRename === true;
     let skipFormattedRename = ocrConfig.skipFormattedRename === true;
 
     for (let i = 0; i < args.length; i++) {
-        if (args[i] === "--target") target = normalizeTarget(args[++i]);
+        if (args[i] === "--target") target = normalizeOcrTarget(args[++i], target);
         else if (args[i] === "--context-file") contextFilePath = args[++i];
         else if (args[i] === "--context-text") contextText = compactTextParts(contextText, args[++i]);
         else if (args[i].startsWith("--context-text=")) contextText = compactTextParts(contextText, args[i].slice("--context-text=".length));
@@ -151,10 +177,15 @@ async function main() {
         else if (args[i] === "--model") aiModelOverride = String(args[++i] || '').trim();
         else if (args[i].startsWith("--model=")) aiModelOverride = args[i].slice("--model=".length).trim();
         else if (args[i] === "--mode") processMode = normalizeMode(args[++i]);
-        else if (args[i] === "--ndlocr") { useNdlocr = true; ndlocrOnly = false; }
-        else if (args[i] === "--ndlocr_only") { useNdlocr = true; ndlocrOnly = true; }
-        else if (args[i] === "--no_ndlocr" || args[i] === "--no-ndlocr") { useNdlocr = false; ndlocrOnly = false; }
+        else if (args[i] === "--ndlocr") { useNdlocr = true; ndlocrOnly = false; ndlocrHint = false; ndlocrModeExplicit = true; }
+        else if (args[i] === "--ndlocr_hint" || args[i] === "--ndlocr-hint") { useNdlocr = true; ndlocrOnly = false; ndlocrHint = true; ndlocrModeExplicit = true; }
+        else if (args[i] === "--ndlocr_only") { useNdlocr = true; ndlocrOnly = true; ndlocrHint = false; ndlocrModeExplicit = true; }
+        else if (args[i] === "--no_ndlocr" || args[i] === "--no-ndlocr") { useNdlocr = false; ndlocrOnly = false; ndlocrHint = false; ndlocrModeExplicit = true; }
         else if (args[i] === "--prefer_pdf_text") preferPdfText = true;
+        else if (args[i] === "--crosscheck") crossCheck = true;
+        else if (args[i] === "--searchable_pdf" || args[i] === "--searchable-pdf") searchablePdf = true;
+        else if (args[i] === "--no_searchable_pdf" || args[i] === "--no-searchable-pdf") searchablePdf = false;
+        else if (args[i] === "--no_crosscheck" || args[i] === "--no-crosscheck") crossCheck = false;
         else if (args[i] === "--auto_rename") autoRename = true;
         else if (args[i] === "--no_auto_rename") autoRename = false;
         else if (args[i] === "--skip_formatted_rename" || args[i] === "--skip-formatted-rename") skipFormattedRename = true;
@@ -165,6 +196,15 @@ async function main() {
     if (aiModelOverride && aiModelOverride.toLowerCase() !== 'auto') {
         setProviderModelOverride(aiProvider, 'chat', aiModelOverride);
     }
+
+    // 無料の道: AI のキーが無く、モードの指定も無ければ、ndlocr-lite だけで読む（PDF のみ）。
+    // 費用はかからない。精度を上げたいときは API キーを設定して ndlocr＋AI のモードにする。
+    if (!ndlocrOnly && !ndlocrModeExplicit && !hasProviderApiKey(aiProvider) && !showPrompt) {
+        console.log(`[情報] ${aiProvider} の API キーが設定されていないため、無料の ndlocr-lite だけで読みます（PDF のみ）。精度を上げるには API キーを設定してください。`);
+        useNdlocr = true;
+        ndlocrOnly = true;
+        ndlocrHint = false;
+    }
     const aiModel = getProviderModel(aiProvider, 'chat');
     const aiLabel = `${aiProvider} / モデル: ${aiModel || '(未設定)'}`;
     const ocrAiLabel = ndlocrOnly
@@ -173,7 +213,14 @@ async function main() {
 
     // コンテキスト指示を構築
     let contextInstruction;
-    if (target === 'houhi') {
+    const houhiContextFile = contextFilePath ? path.resolve(contextFilePath) : DEFAULT_HOUHI_TEMPLATE;
+    const targetAuto = target === 'auto'
+        ? { houhi: buildHouhiStyle(contextFilePath, contextText), general: buildGeneralStyle(contextText), houhiContextFile }
+        : null;
+    if (target === 'auto') {
+        console.log(`[情報] ターゲット: 自動（文書ごとに裁判書面かを判定）`);
+        contextInstruction = targetAuto.general;
+    } else if (target === 'houhi') {
         console.log(`[情報] ターゲット: houhi（裁判文書フォーマット）`);
         contextInstruction = buildHouhiStyle(contextFilePath, contextText);
     } else {
@@ -197,7 +244,7 @@ async function main() {
         console.log("   node ocr.js <入力パス...> [オプション]");
         console.log("");
         console.log(" オプション:");
-        console.log(`   --target houhi|general   出力スタイル（現在の既定: ${target}）`);
+        console.log(`   --target auto|houhi|general 出力スタイル（現在の既定: ${target}。auto は裁判書面だけ houhi）`);
         console.log("   --context-file <path>    houhi モード用サンプル Markdown のパス（省略可）");
         console.log("   --context-text <text>    OCR用の補助コンテキスト");
         console.log("   --context-file-text <path> OCR用の補助コンテキストファイル");
@@ -207,10 +254,15 @@ async function main() {
         console.log(`   --ai gemini|claude|openai  AI プロバイダー（現在の既定: ${aiProvider}）`);
         console.log(`   --model <model>           OCRモデル（現在: ${aiModel || '(未設定)'}）`);
         console.log(`   --mode batch|sync        処理モード（現在の既定: ${processMode}）`);
-        console.log("   --ndlocr                 ndlocr-lite を前処理に使用");
+        console.log("   --ndlocr                 ndlocr-lite の文字だけを AI に整形させる（pre）");
+        console.log("   --ndlocr_hint            頁の画像を AI に読ませ、ndlocr-lite の読みを参考に添える（hint）");
         console.log("   --ndlocr_only            ndlocr のみで処理（PDF のみ）");
         console.log("   --no_ndlocr              既定設定の ndlocr-lite 併用を無効化");
         console.log("   --prefer_pdf_text        埋め込みテキストを OCR より優先");
+        console.log("   --crosscheck             AI と ndlocr-lite の読みを照合し、食い違いを _照合.html にまとめる（ndlocr 併用時は既定）");
+        console.log("   --no_crosscheck          照合をしない");
+        console.log("   --searchable_pdf         元の PDF に文字の層を重ねた _検索可能.pdf も作る（ndlocr のみのときは既定）");
+        console.log("   --no_searchable_pdf      _検索可能.pdf を作らない");
         console.log("   --auto_rename            AIによる自動ファイル名変更を有効化");
         console.log("   --skip_formatted_rename  形式済みファイルの自動改名をスキップ");
         console.log("   --show_prompt            OCRプロンプトを表示して終了");
@@ -239,35 +291,42 @@ async function main() {
     const processFile = async (filePath) => {
         const ext = path.extname(filePath).toLowerCase();
         let ocrOutputPath = null;
+        let fileContext = contextInstruction;
+        let fileTarget = target === 'auto' ? 'general' : target;
+        if (target === 'auto' && ext === '.docx') {
+            const decision = detectOcrTarget(readDocxSampleText(filePath));
+            fileTarget = decision.target;
+            fileContext = decision.target === 'houhi' ? targetAuto.houhi : targetAuto.general;
+            console.log(`[出力の型] 自動: ${fileTarget === 'houhi' ? 'houhi（裁判書面）' : 'general（一般文書）'}（点数 ${decision.score}）`);
+        }
         const metadataOptions = {
-            target,
-            contextFilePath: target === 'houhi'
-                ? (contextFilePath ? path.resolve(contextFilePath) : DEFAULT_HOUHI_TEMPLATE)
-                : null
+            target: fileTarget,
+            targetAuto: target === 'auto' ? true : undefined,
+            contextFilePath: fileTarget === 'houhi' ? houhiContextFile : null
         };
         if (ext === ".pdf") {
-            console.log(`\n[PDF 処理] 開始: ${path.basename(filePath)} (AI: ${ocrAiLabel}, モード: ${processMode}, Pre-OCR: ${useNdlocr})`);
-            ocrOutputPath = await pdfToText(filePath, batchSize, startPage, endPage, contextInstruction, aiProvider, processMode, useNdlocr, ndlocrOnly, preferPdfText, metadataOptions);
+            console.log(`\n[PDF 処理] 開始: ${path.basename(filePath)} (AI: ${ocrAiLabel}, モード: ${processMode}, ndlocr: ${!useNdlocr ? 'off' : (ndlocrOnly ? 'only' : (ndlocrHint ? 'hint' : 'pre'))})`);
+            ocrOutputPath = await pdfToText(filePath, batchSize, startPage, endPage, fileContext, aiProvider, processMode, useNdlocr, ndlocrOnly, preferPdfText, metadataOptions, { ndlocrHint, targetAuto, crossCheck, searchablePdf: searchablePdf ?? ndlocrOnly });
         } else if (ext === ".docx") {
-            if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
+            if (ndlocrOnly) throw new Error(NDLOCR_ONLY_PDF_MESSAGE);
             console.log(`\n[Word 処理] 開始: ${path.basename(filePath)} (AI: ${aiLabel}, モード: ${processMode})`);
-            ocrOutputPath = await docxToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
+            ocrOutputPath = await docxToText(filePath, fileContext, aiProvider, processMode, metadataOptions);
         } else if (ext === ".doc") {
-            if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
+            if (ndlocrOnly) throw new Error(NDLOCR_ONLY_PDF_MESSAGE);
             console.log(`\n[Word(doc) 処理] 開始: ${path.basename(filePath)} (AI: ${aiLabel}, モード: ${processMode})`);
-            ocrOutputPath = await docToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
+            ocrOutputPath = await docToText(filePath, fileContext, aiProvider, processMode, metadataOptions);
         } else if (ext === ".odt") {
-            if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
+            if (ndlocrOnly) throw new Error(NDLOCR_ONLY_PDF_MESSAGE);
             console.log(`\n[ODT 処理] 開始: ${path.basename(filePath)} (AI: ${aiLabel}, モード: ${processMode})`);
-            ocrOutputPath = await odtToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
+            ocrOutputPath = await odtToText(filePath, fileContext, aiProvider, processMode, metadataOptions);
         } else if (ext === ".pptx") {
-            if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
+            if (ndlocrOnly) throw new Error(NDLOCR_ONLY_PDF_MESSAGE);
             console.log(`\n[PowerPoint 処理] 開始: ${path.basename(filePath)} (AI: ${aiLabel}, モード: ${processMode})`);
-            ocrOutputPath = await pptxToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
+            ocrOutputPath = await pptxToText(filePath, fileContext, aiProvider, processMode, metadataOptions);
         } else if ([".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"].includes(ext)) {
-            if (ndlocrOnly) throw new Error("ndlocr-only モードは現在 PDF のみ対応です");
+            if (ndlocrOnly) throw new Error(NDLOCR_ONLY_PDF_MESSAGE);
             console.log(`\n[画像 処理] 開始: ${path.basename(filePath)} (AI: ${aiLabel}, モード: ${processMode})`);
-            ocrOutputPath = await imageToText(filePath, contextInstruction, aiProvider, processMode, metadataOptions);
+            ocrOutputPath = await imageToText(filePath, fileContext, aiProvider, processMode, metadataOptions);
         } else {
             console.warn(`[警告] 未対応のファイル形式です: ${path.basename(filePath)}`);
             return false;
@@ -280,7 +339,7 @@ async function main() {
 
         if (ocrOutputPath && autoRename) {
             try {
-                await maybeAutoRenameDocument(filePath, ocrOutputPath, aiProvider, target, { skipFormattedRename });
+                await maybeAutoRenameDocument(filePath, ocrOutputPath, aiProvider, fileTarget, { skipFormattedRename });
             } catch (err) {
                 console.warn(`[警告] 自動改名に失敗しました: ${path.basename(filePath)} / ${err.message}`);
             }

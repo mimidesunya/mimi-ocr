@@ -20,6 +20,16 @@ function getOpenAIConfig() {
  * OpenAI API クライアント
  * PDFはページ画像に変換してから送信（OpenAIはPDFを直接受け付けないため）
  */
+
+// 費用の集計のため、OpenAI の利用量を Gemini 形式（usageMetadata）に揃える。
+function toGeminiUsage(usage) {
+    if (!usage) return undefined;
+    return {
+        promptTokenCount: Number(usage.prompt_tokens || usage.input_tokens || 0),
+        candidatesTokenCount: Number(usage.completion_tokens || usage.output_tokens || 0)
+    };
+}
+
 class OpenAIClient {
     apiKey;
     baseUrl;
@@ -174,7 +184,8 @@ class OpenAIOcrProcessor {
                                 content: {
                                     parts: [{ text }]
                                 }
-                            }]
+                            }],
+                            usageMetadata: toGeminiUsage(response.usage)
                         }
                     };
                 } catch (err) {
@@ -510,7 +521,8 @@ class OpenAIOcrProcessor {
                                 content: {
                                     parts: [{ text }]
                                 }
-                            }]
+                            }],
+                            usageMetadata: toGeminiUsage(obj.response.body?.usage)
                         }
                     };
                 } else {

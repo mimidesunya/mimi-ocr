@@ -12,6 +12,10 @@ const { loadPdfjsLib } = require('./pdfjs_loader');
 const { extractPdfPagesToImages, detectBlankPdfPages, buildDocumentParameters, cleanupPdfResources } = require('./pdf_to_image');
 const { runNdlocr } = require('./ndlocr_runner');
 const { getGeminiChatModel, getGeminiChatModels, getConfiguredGeminiChatModels, getProviderModel, getToolConfig, getProviderConfig } = require('./gemini_client');
+const { UsageMeter, estimateOcrCost, formatUsd, formatUsageSummary } = require('./usage_meter');
+const { findSuspectPages } = require('./ocr_quality');
+const { detectOcrTarget } = require('./doc_type');
+const { runCrossCheck } = require('./ocr_crosscheck');
 
 function getAiModelLabel(aiProvider) {
     const model = getProviderModel(aiProvider, 'chat');
@@ -167,9 +171,10 @@ function createDocTextRequest(extractedText, contextInstruction = "") {
 
 function createDocRequest(contentParts, contextInstruction = "", isWord = false) {
     const prompt = isWord ? getWordPrompt(contextInstruction) : getOcrPrompt(contentParts.numPages, contextInstruction);
-    
+
     const parts = [
         ...contentParts.dataParts,
+        ...(contentParts.referenceParts || []),
         { text: prompt }
     ];
 
@@ -183,8 +188,38 @@ function createDocRequest(contentParts, contextInstruction = "", isWord = false)
     };
 }
 
+/**
+ * ndlocr-lite の読みを「参考」として添える部分（hint 方式）。
+ *
+ * pre 方式は ndlocr の文字だけを AI に送るので、ndlocr が落とした語は戻らず、直しは当て推量になる
+ * （2026-11-14 の比較で、画像を直接読ませた方が欠落も数字の誤りも約半分）。hint 方式は頁の画像を正とし、
+ * ndlocr の読みは小さい字やかすれた字を決める手がかりにだけ使わせる。
+ */
+function buildNdlocrReferenceParts(pageNumbers, referenceTextMap) {
+    if (!referenceTextMap || !Array.isArray(pageNumbers) || pageNumbers.length === 0) return [];
+    const blocks = [];
+    for (let j = 0; j < pageNumbers.length; j++) {
+        const raw = referenceTextMap.get(pageNumbers[j]);
+        const text = normalizeNdlocrText(String(raw || '')).trim();
+        blocks.push(`--- Reference for page ${j + 1} ---\n${text || '(no text detected)'}`);
+    }
+    if (!blocks.some(block => !/\(no text detected\)$/.test(block))) return [];
+    return [{
+        text: [
+            '# REFERENCE TEXT FROM A LOCAL OCR ENGINE',
+            'The text below was read from the same pages by a local OCR engine (ndlocr-lite). It can contain misread characters, dropped lines, a wrong reading order and broken tables.',
+            '- The page images are authoritative. Transcribe what the images show, including everything the reference text misses.',
+            '- Use the reference only to settle characters that are hard to see in the image (small print, faint, blurred or stamped characters).',
+            '- Never copy words, numbers or lines from the reference that you cannot see in the image.',
+            '',
+            ...blocks,
+            '--- End of reference ---'
+        ].join('\n')
+    }];
+}
+
 // Keep createOcrRequest for backward compatibility or direct PDF use
-function createOcrRequest(pdfBytes, numPages, contextInstruction = "") {
+function createOcrRequest(pdfBytes, numPages, contextInstruction = "", referenceParts = []) {
     return createDocRequest({
         dataParts: [
             {
@@ -194,11 +229,12 @@ function createOcrRequest(pdfBytes, numPages, contextInstruction = "") {
                 }
             }
         ],
+        referenceParts,
         numPages: numPages
     }, contextInstruction, false);
 }
 
-async function createImageOcrRequestFromPdfPages(pdfPath, pageNumbers, contextInstruction = "") {
+async function createImageOcrRequestFromPdfPages(pdfPath, pageNumbers, contextInstruction = "", referenceTextMap = null) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi_ocr_pdf_images_'));
     try {
         const imagePaths = await extractPdfPagesToImages(pdfPath, tmpDir, getNdlocrImageDpi(), pageNumbers);
@@ -212,6 +248,7 @@ async function createImageOcrRequestFromPdfPages(pdfPath, pageNumbers, contextIn
                     data: fs.readFileSync(imagePath).toString('base64')
                 }
             })),
+            referenceParts: buildNdlocrReferenceParts(pageNumbers, referenceTextMap),
             numPages: imagePaths.length
         }, contextInstruction, false);
     } finally {
@@ -283,12 +320,20 @@ async function runOpenAIBatch(requests, progressState, processMode = 'batch', pe
 }
 
 // 単一または少数のリクエスト用ヘルパー（Word文書用）
-async function runSingleBatch(requests, batchProcessor, progressState, displayName, persistenceFile, aiProvider = 'gemini', processMode = 'batch') {
+async function runSingleBatch(requests, batchProcessor, progressState, displayName, persistenceFile, aiProvider = 'gemini', processMode = 'batch', usageMeter = null) {
+    const countUsage = (results, modelId) => {
+        if (!usageMeter || !Array.isArray(results)) return;
+        for (const result of results) usageMeter.addResponse(modelId, result?.response);
+    };
     if (aiProvider === 'claude') {
-        return await runClaudeBatch(requests, progressState, processMode);
+        const results = await runClaudeBatch(requests, progressState, processMode);
+        countUsage(results, getProviderModel('claude', 'chat'));
+        return results;
     }
     if (aiProvider === 'openai') {
-        return await runOpenAIBatch(requests, progressState, processMode, persistenceFile);
+        const results = await runOpenAIBatch(requests, progressState, processMode, persistenceFile);
+        countUsage(results, getProviderModel('openai', 'chat'));
+        return results;
     }
     
     const modelPriority = getGeminiChatModels();
@@ -324,6 +369,7 @@ async function runSingleBatch(requests, batchProcessor, progressState, displayNa
             const message = normalizeErrorDetail(error?.message || error);
             latestResults = requests.map(() => ({ response: null, error: { message } }));
         }
+        countUsage(latestResults, modelId);
 
         const shouldFallback = latestResults.some(result => (
             (Boolean(result?.error) || !hasUsableAiResponseText(result?.response)) &&
@@ -886,6 +932,7 @@ function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}
         input: inputType,
         settings: {
             target: runtimeOptions.target || 'general',
+            targetAuto: runtimeOptions.targetAuto ? true : null,
             contextFile: normalizeMetadataPath(runtimeOptions.contextFilePath),
             ai: {
                 provider: aiProvider,
@@ -900,7 +947,7 @@ function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}
                 requestedEnd: runtimeOptions.requestedEndPage ?? null,
                 total: runtimeOptions.totalPages ?? null
             },
-            ndlocr: runtimeOptions.ndlocrOnly ? 'only' : (runtimeOptions.useNdlocr ? 'pre' : 'off'),
+            ndlocr: runtimeOptions.ndlocrMode || (runtimeOptions.ndlocrOnly ? 'only' : (runtimeOptions.useNdlocr ? 'pre' : 'off')),
             ndlocrSettings: (runtimeOptions.useNdlocr || runtimeOptions.ndlocrOnly) ? {
                 parallelJobs: ndlocrConfig.parallelJobs,
                 pageChunkSize: ndlocrConfig.pageChunkSize,
@@ -910,8 +957,14 @@ function buildOcrSettingsComment(sourcePath, inputType, runtimeOptions: any = {}
             aiRefusedPages: Array.isArray(runtimeOptions.aiRefusedPages) && runtimeOptions.aiRefusedPages.length > 0
                 ? runtimeOptions.aiRefusedPages
                 : null,
+            suspectPages: Array.isArray(runtimeOptions.suspectPages) && runtimeOptions.suspectPages.length > 0
+                ? runtimeOptions.suspectPages
+                : null,
+            crossCheck: runtimeOptions.crossCheck || null,
+            searchablePdf: runtimeOptions.searchablePdf ? normalizeMetadataPath(runtimeOptions.searchablePdf) : null,
             hasError: runtimeOptions.hasError ? true : null
-        }
+        },
+        usage: runtimeOptions.usage || null
     });
 
     const json = JSON.stringify(metadata, null, 2).replace(/--/g, '\\u002d\\u002d');
@@ -1312,10 +1365,40 @@ async function getPdfPageCount(pdfPath) {
     }
 }
 
-async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, contextInstruction = "", aiProvider = "gemini", processMode = "batch", useNdlocr = false, ndlocrOnly = false, preferPdfText = false, metadataOptions = {}) {
+async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, contextInstruction = "", aiProvider = "gemini", processMode = "batch", useNdlocr = false, ndlocrOnly = false, preferPdfText = false, metadataOptions = {}, ocrOptions: any = {}) {
     if (ndlocrOnly) {
         useNdlocr = true;
     }
+    // hint: ndlocr-lite を回し、その読みを頁画像に添える（画像が正）。pre: ndlocr の文字だけを AI に整形させる。
+    const ndlocrHint = Boolean(ocrOptions?.ndlocrHint) && !ndlocrOnly;
+    if (ndlocrHint) {
+        useNdlocr = true;
+    }
+    const ndlocrModeLabel = !useNdlocr ? 'off' : (ndlocrOnly ? 'only' : (ndlocrHint ? 'hint' : 'pre'));
+    // 実行中に分かったことを末尾の metadata に残すための入れ物。
+    const runInfo: any = { suspectPages: [], crossCheck: null, usage: null, searchablePdf: null };
+    const usageMeter = new UsageMeter();
+    const defaultChatModel = getProviderModel(aiProvider, 'chat');
+    const buildRuntimeMetadata = (hasError) => ({
+        ...metadataOptions,
+        aiProvider,
+        processMode,
+        batchSize,
+        startPage,
+        endPage: actualEndPage,
+        requestedEndPage: endPage,
+        totalPages,
+        useNdlocr,
+        ndlocrOnly,
+        ndlocrMode: ndlocrModeLabel,
+        preferPdfText,
+        aiRefusedPages: listAiRefusedFallbackPages(pageMap),
+        suspectPages: runInfo.suspectPages,
+        crossCheck: runInfo.crossCheck,
+        searchablePdf: runInfo.searchablePdf,
+        usage: usageMeter.summary(),
+        hasError
+    });
 
     // 出力ファイルが既に存在する場合はスキップ
     const normalPath = pdfPath.replace(/\.pdf$/i, "_paged.md");
@@ -1327,7 +1410,8 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     ensureWritableOutputPath(normalPath, 'OCR結果ファイル');
     ensureWritableOutputPath(errorPath, 'OCR中間結果ファイル');
 
-    console.log(`[情報] AI: ${ndlocrOnly ? '使用しない' : getAiModelLabel(aiProvider)} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${useNdlocr ? (ndlocrOnly ? 'Only' : 'Pre-OCR') : 'Off'} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
+    const ndlocrModeText = { off: 'Off', only: 'Only', hint: 'Hint（画像＋参考）', pre: 'Pre-OCR（文字だけ）' }[ndlocrModeLabel];
+    console.log(`[情報] AI: ${ndlocrOnly ? '使用しない' : getAiModelLabel(aiProvider)} / モード: ${processMode === 'sync' ? '同期' : 'バッチ'} / ndlocr: ${ndlocrModeText} / PDFテキスト優先: ${preferPdfText ? 'On' : 'Off'}`);
     const geminiModelPriority = !ndlocrOnly && aiProvider === 'gemini'
         ? getGeminiChatModels()
         : [];
@@ -1619,15 +1703,71 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             }
         }
 
+        // 出力の型が「自動」なら、最初の頁の文字（ndlocr・埋め込みテキスト）から裁判書面かを決める。
+        if (ocrOptions?.targetAuto) {
+            const samplePages = pageIndices.slice(0, 2);
+            let sampleText = samplePages.map(pNum => pageTextMap.get(pNum) || '').join('\n');
+            if (!sampleText.trim()) {
+                try {
+                    const embedded = await extractEmbeddedTextFromPdfPages(pdfPath, samplePages);
+                    sampleText = Array.from(embedded.values()).join('\n');
+                } catch (_e) {
+                }
+            }
+            if (!sampleText.trim()) {
+                try {
+                    await runNdlocrForPages([samplePages[0]]);
+                    sampleText = readNdlocrPageText(samplePages[0]) || '';
+                } catch (e) {
+                    console.warn(`[出力の型] 判定用に ndlocr-lite を動かせませんでした: ${e.message}`);
+                }
+            }
+            const decision = detectOcrTarget(sampleText);
+            contextInstruction = decision.target === 'houhi' ? ocrOptions.targetAuto.houhi : ocrOptions.targetAuto.general;
+            metadataOptions = {
+                ...metadataOptions,
+                target: decision.target,
+                targetAuto: true,
+                contextFilePath: decision.target === 'houhi' ? ocrOptions.targetAuto.houhiContextFile : null
+            };
+            console.log(
+                `[出力の型] 自動: ${decision.target === 'houhi' ? 'houhi（裁判書面）' : 'general（一般文書）'}` +
+                (decision.insufficient ? '（最初の頁に文字が少ないため一般文書）' : `（点数 ${decision.score}: ${decision.reasons.join('、') || '手がかりなし'}）`)
+            );
+        }
+
+        // hint 方式で頁画像に添える ndlocr の読み（埋め込みテキストの頁は従来どおり文字で送る）。
+        const referenceTextMap = ndlocrHint
+            ? new Map(Array.from(pageTextMap.entries()).filter(([pNum]) => !embeddedTextMap.has(pNum)))
+            : null;
+        const referenceFor = (pages) => {
+            if (!referenceTextMap) return null;
+            const subset = new Map();
+            for (const pNum of pages) {
+                if (referenceTextMap.has(pNum)) subset.set(pNum, referenceTextMap.get(pNum));
+            }
+            return subset.size > 0 ? subset : null;
+        };
+
+        {
+            const estimate = estimateOcrCost(defaultChatModel, pageIndices.length, preferPdfText ? 1 : batchSize);
+            console.log(
+                `[費用] 目安: ${estimate.pages} 頁で ${formatUsd(estimate.estimatedUsd)}` +
+                `（${defaultChatModel}、入力 約${estimate.inputTokens.toLocaleString()} / 出力 約${estimate.outputTokens.toLocaleString()} トークン。再試行があれば増える）`
+            );
+        }
+
         // 1. Prepare all requests
         const requests = [];
         const batchMetadata = [];
         const effectiveBatchSize = preferPdfText ? 1 : batchSize;
-        
+
         for (let i = 0; i < pageIndices.length; i += effectiveBatchSize) {
             const batch = pageIndices.slice(i, i + effectiveBatchSize);
 
-            const hasTextForAllPages = batch.every(pNum => pageTextMap.has(pNum));
+            const hasTextForAllPages = ndlocrHint
+                ? batch.every(pNum => embeddedTextMap.has(pNum))
+                : batch.every(pNum => pageTextMap.has(pNum));
 
             if (hasTextForAllPages) {
                 requests.push(createRawTextRequest(batch, pageTextMap, contextInstruction));
@@ -1635,7 +1775,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 continue;
             }
 
-            if (useNdlocr) {
+            if (useNdlocr && !ndlocrHint) {
                 const fallbackTextMap = new Map();
                 for (const pNum of batch) {
                     fallbackTextMap.set(pNum, pageTextMap.get(pNum) || "[未検出]");
@@ -1646,8 +1786,8 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             }
 
             if (aiProvider === 'gemini' && processMode === 'sync') {
-                console.log(`[同期] Gemini PDF直読み回避: ページ ${batch.join(',')} を画像化してOCRします`);
-                requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction));
+                console.log(`[同期] Gemini PDF直読み回避: ページ ${batch.join(',')} を画像化してOCRします${ndlocrHint ? '（ndlocr の読みを参考に添付）' : ''}`);
+                requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction, referenceFor(batch)));
             } else {
                 if (!srcDoc && !pdfLibLoadFailed) {
                     try {
@@ -1662,7 +1802,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
 
                 if (!srcDoc) {
                     console.log(`[情報] ページ ${batch.join(',')} を画像化してOCRします`);
-                    requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction));
+                    requests.push(await createImageOcrRequestFromPdfPages(pdfPath, batch, contextInstruction, referenceFor(batch)));
                     batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch, ...primaryGeminiRequestMeta });
                     continue;
                 }
@@ -1674,7 +1814,12 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 }
 
                 const batchPdfBytes = await newDoc.save();
-                requests.push(createOcrRequest(Buffer.from(batchPdfBytes), batch.length, contextInstruction));
+                requests.push(createOcrRequest(
+                    Buffer.from(batchPdfBytes),
+                    batch.length,
+                    contextInstruction,
+                    buildNdlocrReferenceParts(batch, referenceFor(batch))
+                ));
             }
             
             batchMetadata.push({ startPage: batch[0], numPages: batch.length, pages: batch, ...primaryGeminiRequestMeta });
@@ -1704,6 +1849,10 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
         const MAX_TABLE_RETRIES = 2;
         const droppedTableAttempts = new Map();
         const droppedTableFallback = new Map();
+        // 暴走・断り書き・字数の外れの頁も同じ形で1頁ずつ読み直し、実らなければ元の本文へ戻す。
+        const MAX_SUSPECT_RETRIES = 1;
+        const suspectAttempts = new Map();
+        const suspectFallback = new Map();
         // すべてのモデルに拒否されたページ。ループの後で ndlocr-lite の結果を採用する。
         const aiRefusedPages = new Set<number>();
 
@@ -1724,21 +1873,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                     tmpMarkdown += buildOcrErrorPageContent(i, pageErrorMap.get(i));
                 }
             }
-            const contentWithMetadata = appendOcrSettingsComment(tmpMarkdown, pdfPath, 'pdf', {
-                ...metadataOptions,
-                aiProvider,
-                processMode,
-                batchSize,
-                startPage,
-                endPage: actualEndPage,
-                requestedEndPage: endPage,
-                totalPages,
-                useNdlocr,
-                ndlocrOnly,
-                preferPdfText,
-                aiRefusedPages: listAiRefusedFallbackPages(pageMap),
-                hasError: true
-            });
+            const contentWithMetadata = appendOcrSettingsComment(tmpMarkdown, pdfPath, 'pdf', buildRuntimeMetadata(true));
             writeTextFileWithContext(errorPath, contentWithMetadata, 'OCR中間結果ファイル');
             console.log(`[情報] 中間結果を ${errorPath} に保存しました (${pageMap.size} ページ完了)`);
         };
@@ -1767,7 +1902,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 for (const pageNum of unresolvedPages) {
                     splitRequests.push({
                         pageNum,
-                        request: await createImageOcrRequestFromPdfPages(pdfPath, [pageNum], contextInstruction)
+                        request: await createImageOcrRequestFromPdfPages(pdfPath, [pageNum], contextInstruction, referenceFor([pageNum]))
                     });
                 }
                 for (const item of splitRequests) {
@@ -1825,7 +1960,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             try {
                 for (const pageNum of unresolvedPages) {
                     const newIndex = requests.length;
-                    requests.push(await createImageOcrRequestFromPdfPages(pdfPath, [pageNum], contextInstruction));
+                    requests.push(await createImageOcrRequestFromPdfPages(pdfPath, [pageNum], contextInstruction, referenceFor([pageNum])));
                     batchMetadata.push({
                         startPage: pageNum,
                         numPages: 1,
@@ -1918,6 +2053,7 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 const originalIndex = pendingIndices[i];
                 const result = batchResults[i] || { error: { message: 'Result missing for this request item' } };
                 const meta = batchMetadata[originalIndex];
+                usageMeter.addResponse(meta.modelId || defaultChatModel, result.response);
                 
                 let success = false;
                 let text = "";
@@ -1980,6 +2116,20 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                         const detail = `表が書き起こされず説明文で置き換えられました。対象ページ: ${droppedTablePages.join(', ')}`;
                         setPageErrorForPages(droppedTablePages, detail);
                         console.warn(`[警告] バッチ ${originalIndex} で表の取りこぼしを検出しました: ページ ${droppedTablePages.join(', ')}。再試行します。`);
+                    }
+
+                    const suspectPages = findSuspectPages(pageMap, assessment.usefulPages, pageTextMap)
+                        .filter(item => (suspectAttempts.get(item.page) || 0) < MAX_SUSPECT_RETRIES);
+                    if (suspectPages.length > 0) {
+                        for (const item of suspectPages) {
+                            if (!suspectFallback.has(item.page)) {
+                                suspectFallback.set(item.page, pageMap.get(item.page));
+                            }
+                            suspectAttempts.set(item.page, (suspectAttempts.get(item.page) || 0) + 1);
+                            pageMap.delete(item.page);
+                            setPageError(item.page, item.reason);
+                            console.warn(`[検知] ページ ${item.page}: ${item.reason}。1頁ずつ読み直します。`);
+                        }
                     }
 
                     const confirmationCandidates = assessment.unresolvedPages.filter(
@@ -2100,6 +2250,20 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             );
         }
 
+        // 読み直しが実らなかった疑わしい頁は、元の本文へ戻す（何も残らないよりはよい）。
+        for (const [pageNum, fallbackBlock] of suspectFallback) {
+            if (pageMap.has(pageNum) || !fallbackBlock) continue;
+            pageMap.set(pageNum, fallbackBlock);
+            pageErrorMap.delete(pageNum);
+        }
+        // 最後に残った疑わしい頁を metadata とログに残す。
+        runInfo.suspectPages = findSuspectPages(pageMap, pageIndices, pageTextMap);
+        if (runInfo.suspectPages.length > 0) {
+            for (const item of runInfo.suspectPages) {
+                console.warn(`[要確認] ページ ${item.page}: ${item.reason}。画像で確かめてください。`);
+            }
+        }
+
         // AI に拒否されたページは AI での後処理をあきらめ、ndlocr-lite の結果（または埋め込みテキスト）を
         // そのまま採用する。前処理で ndlocr を回していなければ、そのページだけここで回す。
         const refusedPages = Array.from(aiRefusedPages).filter(pageNum => !pageMap.has(pageNum)).sort((a, b) => a - b);
@@ -2140,6 +2304,49 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
             );
         }
 
+        // 二重読みの照合: AI の読みと ndlocr-lite の読みで、日付・番号・数字の食い違いを画像つきで示す。
+        // ndlocr を前処理に使ったときは既定で行う。画像だけで読んだときは --crosscheck で ndlocr を回して行う。
+        const crossCheckSetting = ocrOptions?.crossCheck;
+        if (crossCheckSetting !== false) {
+            const reportPath = pdfPath.replace(/\.pdf$/i, '_照合.html');
+            try {
+                if (!useNdlocr && crossCheckSetting === true) {
+                    const targets = pageIndices.filter(pNum => pageMap.has(pNum) && !embeddedTextMap.has(pNum));
+                    if (targets.length > 0) {
+                        console.log(`[照合] ndlocr-lite で ${targets.length} 頁を読み、AI の読みと比べます。`);
+                        await runNdlocrForPages(targets);
+                    }
+                }
+                const refTextMap = new Map();
+                for (const pNum of pageIndices) {
+                    if (embeddedTextMap.has(pNum)) continue;
+                    const ref = readNdlocrPageText(pNum);
+                    if (ref !== null) refTextMap.set(pNum, ref);
+                }
+                if (refTextMap.size > 0) {
+                    const summary = await runCrossCheck({
+                        pdfPath,
+                        pages: pageIndices,
+                        pageMap,
+                        refTextMap,
+                        ndlocrOutDir,
+                        imageDpi: getNdlocrImageDpi(),
+                        reportPath,
+                        renderPages: extractPdfPagesToImages
+                    });
+                    runInfo.crossCheck = { pages: summary.pages, mismatches: summary.mismatches, report: summary.report ? path.basename(summary.report) : null };
+                    if (summary.report) {
+                        console.warn(`[照合] AI と ndlocr-lite の読みで ${summary.mismatches} か所が食い違いました。原本の画像で確かめてください: ${summary.report}`);
+                    } else {
+                        console.log(`[照合] ${summary.pages} 頁を照合し、日付・番号・数字の食い違いはありませんでした。`);
+                        if (fs.existsSync(reportPath)) fs.rmSync(reportPath, { force: true });
+                    }
+                }
+            } catch (e) {
+                console.warn(`[照合] 照合に失敗しました（OCR の結果はそのまま保存します）: ${e.message}`);
+            }
+        }
+
         const unresolvedAfterAi = pageIndices.filter(pageNum => !pageMap.has(pageNum));
         if (unresolvedAfterAi.length > 0) {
             try {
@@ -2160,6 +2367,41 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
                 console.warn(`[PDFテキスト救済] ローカル復旧判定に失敗しました: ${e.message}`);
             }
         }
+    }
+
+    // 検索できる PDF: 元の頁の画像はそのままに、ndlocr-lite の読みを見えない文字として重ねる。
+    // 文書の全頁を読んだときだけ作る（ndlocr は PDF 全体を読む）。既に文字の層がある PDF には作らない。
+    if (ocrOptions?.searchablePdf && startPage === 1 && actualEndPage === totalPages) {
+        const searchablePath = pdfPath.replace(/\.pdf$/i, '_検索可能.pdf');
+        try {
+            const probePages = Array.from({ length: Math.min(3, totalPages) }, (_v, i) => i + 1);
+            const probe = await extractEmbeddedTextFromPdfPages(pdfPath, probePages);
+            if (probe.size === probePages.length) {
+                console.log('[検索可能PDF] この PDF には既に文字の層があるので作りません。');
+            } else if (fs.existsSync(searchablePath)) {
+                console.log(`[検索可能PDF] 既にあります: ${searchablePath}`);
+                runInfo.searchablePdf = searchablePath;
+            } else {
+                const layerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ndlocr_pdf_'));
+                try {
+                    console.log('[検索可能PDF] ndlocr-lite で文字の層を作っています...');
+                    await runNdlocr(pdfPath, layerDir, 'pdf', ['--pdf-output', searchablePath, '--json-only']);
+                    if (fs.existsSync(searchablePath)) {
+                        runInfo.searchablePdf = searchablePath;
+                        console.log(`[検索可能PDF] 保存しました: ${searchablePath}`);
+                    }
+                } finally {
+                    try { fs.rmSync(layerDir, { recursive: true, force: true }); } catch (_e) { }
+                }
+            }
+        } catch (e) {
+            console.warn(`[検索可能PDF] 作れませんでした（OCR の結果はそのまま保存します）: ${e.message}`);
+        }
+    }
+
+    runInfo.usage = usageMeter.summary();
+    if (runInfo.usage) {
+        console.log(`[費用] ${formatUsageSummary(runInfo.usage)}`);
     }
 
     // 3. Assemble results
@@ -2189,40 +2431,12 @@ async function pdfToText(pdfPath, batchSize = 5, startPage = 1, endPage = null, 
     cleanupNdlocrTempDir();
 
     if (hasError) {
-        writeTextFileWithContext(errorPath, appendOcrSettingsComment(allMarkdown, pdfPath, 'pdf', {
-            ...metadataOptions,
-            aiProvider,
-            processMode,
-            batchSize,
-            startPage,
-            endPage: actualEndPage,
-            requestedEndPage: endPage,
-            totalPages,
-            useNdlocr,
-            ndlocrOnly,
-            preferPdfText,
-            aiRefusedPages: listAiRefusedFallbackPages(pageMap),
-            hasError: true
-        }), 'OCR中間結果ファイル');
+        writeTextFileWithContext(errorPath, appendOcrSettingsComment(allMarkdown, pdfPath, 'pdf', buildRuntimeMetadata(true)), 'OCR中間結果ファイル');
         console.log(`[警告] エラーを含んだ状態で ${errorPath} に保存されました`);
         removeFileIfExists(normalPath, 'OCR結果ファイル');
         return errorPath;
     } else {
-        writeTextFileWithContext(normalPath, appendOcrSettingsComment(allMarkdown, pdfPath, 'pdf', {
-            ...metadataOptions,
-            aiProvider,
-            processMode,
-            batchSize,
-            startPage,
-            endPage: actualEndPage,
-            requestedEndPage: endPage,
-            totalPages,
-            useNdlocr,
-            ndlocrOnly,
-            preferPdfText,
-            aiRefusedPages: listAiRefusedFallbackPages(pageMap),
-            hasError: false
-        }), 'OCR結果ファイル');
+        writeTextFileWithContext(normalPath, appendOcrSettingsComment(allMarkdown, pdfPath, 'pdf', buildRuntimeMetadata(false)), 'OCR結果ファイル');
         console.log(`[成功] ${normalPath} に保存されました`);
         removeFileIfExists(errorPath, 'OCR中間結果ファイル');
         return normalPath;
@@ -2260,13 +2474,17 @@ async function docToText(docPath, contextInstruction = "", aiProvider = "gemini"
         const request = createDocTextRequest(extractedText, contextInstruction);
 
         const persistenceFile = `${docPath}.batch_state.txt`;
-        const results = await runSingleBatch([request], batchProcessor, progressState, "word-batch-job", persistenceFile, aiProvider, processMode);
+        const usageMeter = new UsageMeter();
+        const results = await runSingleBatch([request], batchProcessor, progressState, "word-batch-job", persistenceFile, aiProvider, processMode, usageMeter);
+        const usage = usageMeter.summary();
+        if (usage) console.log(`[費用] ${formatUsageSummary(usage)}`);
         const result = results[0];
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
             writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, docPath, 'doc', {
                 ...metadataOptions,
+                usage,
                 aiProvider,
                 processMode,
                 hasError: false
@@ -2336,13 +2554,17 @@ async function docxToText(docxPath, contextInstruction = "", aiProvider = "gemin
         );
 
         const persistenceFile = `${docxPath}.batch_state.txt`;
-        const results = await runSingleBatch([request], batchProcessor, progressState, "word-batch-job", persistenceFile, aiProvider, processMode);
+        const usageMeter = new UsageMeter();
+        const results = await runSingleBatch([request], batchProcessor, progressState, "word-batch-job", persistenceFile, aiProvider, processMode, usageMeter);
+        const usage = usageMeter.summary();
+        if (usage) console.log(`[費用] ${formatUsageSummary(usage)}`);
         const result = results[0];
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
             writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, docxPath, 'docx', {
                 ...metadataOptions,
+                usage,
                 aiProvider,
                 processMode,
                 hasError: false
@@ -2417,13 +2639,17 @@ async function odtToText(odtPath, contextInstruction = "", aiProvider = "gemini"
         };
 
         const persistenceFile = `${odtPath}.batch_state.txt`;
-        const results = await runSingleBatch([request], batchProcessor, progressState, "odt-batch-job", persistenceFile, aiProvider, processMode);
+        const usageMeter = new UsageMeter();
+        const results = await runSingleBatch([request], batchProcessor, progressState, "odt-batch-job", persistenceFile, aiProvider, processMode, usageMeter);
+        const usage = usageMeter.summary();
+        if (usage) console.log(`[費用] ${formatUsageSummary(usage)}`);
         const result = results[0];
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
             writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, odtPath, 'odt', {
                 ...metadataOptions,
+                usage,
                 aiProvider,
                 processMode,
                 hasError: false
@@ -2548,13 +2774,17 @@ async function pptxToText(pptxPath, contextInstruction = "", aiProvider = "gemin
         };
 
         const persistenceFile = `${pptxPath}.batch_state.txt`;
-        const results = await runSingleBatch([request], batchProcessor, progressState, "pptx-batch-job", persistenceFile, aiProvider, processMode);
+        const usageMeter = new UsageMeter();
+        const results = await runSingleBatch([request], batchProcessor, progressState, "pptx-batch-job", persistenceFile, aiProvider, processMode, usageMeter);
+        const usage = usageMeter.summary();
+        if (usage) console.log(`[費用] ${formatUsageSummary(usage)}`);
         const result = results[0];
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
             writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, pptxPath, 'pptx', {
                 ...metadataOptions,
+                usage,
                 aiProvider,
                 processMode,
                 hasError: false
@@ -2606,13 +2836,17 @@ async function imageToText(imagePath, contextInstruction = "", aiProvider = "gem
         const progressState = { completed: 0, total: 1, startTime: Date.now() };
         const persistenceFile = `${imagePath}.batch_state.txt`;
 
-        const results = await runSingleBatch([request], batchProcessor, progressState, "image-ocr-job", persistenceFile, aiProvider, processMode);
+        const usageMeter = new UsageMeter();
+        const results = await runSingleBatch([request], batchProcessor, progressState, "image-ocr-job", persistenceFile, aiProvider, processMode, usageMeter);
+        const usage = usageMeter.summary();
+        if (usage) console.log(`[費用] ${formatUsageSummary(usage)}`);
         const result = results[0];
 
         if (!result.error && result.response?.candidates?.[0]?.content?.parts) {
             let text = result.response.candidates[0].content.parts.map(p => p.text).join('');
             writeTextFileWithContext(normalPath, appendOcrSettingsComment(text, imagePath, 'image', {
                 ...metadataOptions,
+                usage,
                 aiProvider,
                 processMode,
                 hasError: false
@@ -2638,6 +2872,7 @@ module.exports = {
     getOcrPrompt,
     getRawTextFormattingPrompt,
     getTodayDateInstruction,
+    buildNdlocrReferenceParts,
     estimateRequestsPayloadBytes,
     applyOcrBatchTextResult,
     confirmRepeatedEmptyPdfPages,

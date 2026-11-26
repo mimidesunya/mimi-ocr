@@ -8,9 +8,10 @@ const { resolveNdlocrLite } = require('./tool_resolver');
  * Executes ndlocr-lite on a given image file or directory.
  * @param {string} sourcePath Path to an image file or a directory containing images.
  * @param {string} destDir Path to the output directory where ndlocr will save results.
- * @param {boolean} isDir True if sourcePath is a directory.
+ * @param {boolean|string} isDir True if sourcePath is a directory, 'pdf' for a PDF (--sourcepdf).
+ * @param {string[]} extraArgs Additional ndlocr-lite arguments (e.g. --pdf-output).
  */
-async function runNdlocr(sourcePath, destDir, isDir = false) {
+async function runNdlocr(sourcePath, destDir, isDir: boolean | string = false, extraArgs: string[] = []) {
     const ndlocrLite = getToolConfig('ndlocrLite') || {};
     const resolved = await resolveNdlocrLite(ndlocrLite);
 
@@ -28,12 +29,14 @@ async function runNdlocr(sourcePath, destDir, isDir = false) {
         }
 
         const args = [ocrPyPath];
-        if (isDir) {
+        if (isDir === 'pdf') {
+            args.push('--sourcepdf', sourcePath);
+        } else if (isDir) {
             args.push('--sourcedir', sourcePath);
         } else {
             args.push('--sourceimg', sourcePath);
         }
-        args.push('--output', destDir);
+        args.push('--output', destDir, ...extraArgs);
 
         console.log(`[ndlocr] 実行: ${pythonPath} ${args.join(' ')}`);
 

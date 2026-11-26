@@ -338,7 +338,17 @@ function getApiKey() {
     if (gemini?.apiKey) {
         return gemini.apiKey;
     }
-    return process.env.GEMINI_API_KEY;
+    return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+}
+
+// AI の provider のキーがあるか（無料の道＝ndlocr のみへ切り替える判断に使う）。
+function hasProviderApiKey(provider) {
+    if (provider === 'gemini') return Boolean(getApiKey());
+    const config = getProviderConfig(provider);
+    if (config?.apiKey) return true;
+    if (provider === 'openai') return Boolean(process.env.OPENAI_API_KEY);
+    if (provider === 'claude') return Boolean(process.env.ANTHROPIC_API_KEY);
+    return false;
 }
 
 function getGeminiChatModel() {
@@ -363,5 +373,6 @@ module.exports = {
     getConfiguredGeminiChatModels,
     getToolConfig,
     getApiKey,
+    hasProviderApiKey,
     getGeminiChatModel
 };
