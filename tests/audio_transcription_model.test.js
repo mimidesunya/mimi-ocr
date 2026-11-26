@@ -52,6 +52,8 @@ const {
     parseArgs,
     normalizeOptions,
     selectTextAiProvider,
+    findProtectedTokenChanges,
+    kanjiNumeralsToDigits,
 } = require('../dist/src/transcribe_audio.js');
 
 function transcriptSettingsComment(settings, schemaVersion = 3) {
@@ -1461,6 +1463,108 @@ test('an invalid OpenAI Chat API key aborts both short and long postprocessing i
                 },
             );
         }
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+// ---- AI 全体補正の守り（当事者・号証・数字） ----
+
+test('protected tokens: party roles, exhibits and numbers are compared, kanji numerals count as digits', () => {
+    assert.deepEqual(findProtectedTokenChanges('原告は準備書面を提出', '被告は準備書面を提出'), { removed: ['役割:原告'], added: ['役割:被告'] });
+    assert.equal(findProtectedTokenChanges('記日は三月五日です', '期日は3月5日です。'), null);
+    assert.equal(findProtectedTokenChanges('甲第1号証の写し', '甲1の写し'), null);
+    assert.equal(findProtectedTokenChanges('被控訴人は答弁した', '被控訴人は答弁した。'), null);
+    assert.ok(findProtectedTokenChanges('乙2の1を出す', '乙2の2を出す'));
+    assert.ok(findProtectedTokenChanges('代金は385,000円', '代金は358,000円'));
+    assert.equal(kanjiNumeralsToDigits('二〇二六年十一月二十六日'), '2026年11月26日');
+});
+
+function partyStatementItems(count) {
+    return Array.from({ length: count }, (_unused, index) => {
+        const totalSeconds = index * 15;
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        const section = Math.floor(index / 60) + 1;
+        return {
+            speaker: `話者1（区間${section}）`,
+            speakerId: 'spk:0',
+            speakerSection: section,
+            time: `00:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`,
+            startMs: totalSeconds * 1000,
+            endMs: totalSeconds * 1000 + 1000,
+            text: '原告は準備書面を提出',
+        };
+    });
+}
+
+test('the long-transcript correction cannot turn every 原告 into 被告 (2026-11-11), but its other fixes stay', async () => {
+    const rawItems = partyStatementItems(130);
+    rawItems[0].text = '原告は準備書面を提出 記日は次回';
+    assert.equal(shouldChunkTranscriptPostprocess(rawItems), true);
+    const options = {
+        provider: 'gemini',
+        model: 'gemini-3.5-transcribe',
+        geminiApiKey: 'synthetic-test-key',
+        geminiChatModel: 'configured-chat-model',
+        target: 'houhi',
+        contextText: '',
+        postprocessAi: 'auto',
+    };
+    const originalFetch = global.fetch;
+    global.fetch = async (_url, init) => {
+        const prompt = JSON.parse(init.body).contents[0].parts[0].text;
+        if (prompt.includes('# TRANSCRIPT CONTEXT JSON')) {
+            return geminiChatJsonPayload({ overview: {}, speaker_map: {}, context_summary: '', terminology: ['原告', '準備書面'] });
+        }
+        const targetItems = targetItemsFromCorrectionPrompt(prompt);
+        return geminiChatJsonPayload({
+            overview: {},
+            items: targetItems.map(item => ({
+                ...item,
+                text: item.text.replace('原告', '被告').replace('記日', '期日') + '。',
+            })),
+        });
+    };
+    try {
+        const result = await postprocessTranscriptWithAi('party.m4a', rawItems, options);
+        assert.equal(result.items.length, rawItems.length);
+        assert.ok(result.items.every(item => item.text.startsWith('原告は準備書面を提出')), 'the party role is kept');
+        assert.equal(result.guardReverts.reverted, rawItems.length);
+        assert.deepEqual(result.guardReverts.examples[0].removed, ['役割:原告']);
+        assert.deepEqual(result.guardReverts.examples[0].added, ['役割:被告']);
+    } finally {
+        global.fetch = originalFetch;
+    }
+});
+
+test('the short correction path keeps punctuation and word fixes that do not touch protected tokens', async () => {
+    const rawItems = [
+        { speaker: '話者1', time: '00:00', text: '次回の記日は三月五日' },
+        { speaker: '話者2', time: '00:05', text: '乙二号証を提出します' },
+    ];
+    const options = {
+        provider: 'gemini',
+        model: 'gemini-3.5-transcribe',
+        geminiApiKey: 'synthetic-test-key',
+        geminiChatModel: 'configured-chat-model',
+        target: 'general',
+        contextText: '',
+        postprocessAi: 'auto',
+    };
+    const originalFetch = global.fetch;
+    global.fetch = async () => geminiChatJsonPayload({
+        overview: {},
+        items: [
+            { id: 1, speaker: '話者1', time: '00:00', text: '次回の期日は3月5日。' },
+            { id: 2, speaker: '話者2', time: '00:05', text: '乙3号証を提出します。' },
+        ],
+    });
+    try {
+        const result = await postprocessTranscriptWithAi('short.m4a', rawItems, options);
+        assert.equal(result.items[0].text, '次回の期日は3月5日。');
+        assert.equal(result.items[1].text, '乙二号証を提出します', 'a changed exhibit number is not accepted');
+        assert.equal(result.guardReverts.reverted, 1);
     } finally {
         global.fetch = originalFetch;
     }

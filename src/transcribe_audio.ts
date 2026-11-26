@@ -2536,11 +2536,70 @@ function extractTranscriptPostprocessContext(raw: any): TranscriptPostprocessCon
     };
 }
 
+// ---- AI 全体補正の守り ----
+// 長尺の全体補正が、少数の誤りの側へ全体を揃えて語を入れ替えることがある（2026-11-11 の試験で
+// 「原告は準備書面を提出」42か所がすべて「被告」になった）。当事者の役割・号証番号・日付や金額の数字は
+// 音声認識の読みを正とし、補正の前後でこれらが変わった発言は生の文に戻す。
+const PROTECTED_ROLE_PATTERN = /被控訴人|被上告人|控訴人|上告人|審査請求人|再審査請求人|申立人|被申立人|抗告人|相手方|請求人|債権者|債務者|処分庁|原告|被告/g;
+const PROTECTED_EXHIBIT_PATTERN = /[甲乙丙丁]\s*第?\s*\d+\s*号?証?(?:の\d+)*/g;
+
+function kanjiNumeralsToDigits(text: string) {
+    const digits: Record<string, number> = { '〇': 0, '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
+    const units: Record<string, number> = { '十': 10, '百': 100, '千': 1000 };
+    return String(text || '').replace(/[〇零一二三四五六七八九十百千]+/g, (run) => {
+        // 位取りのない並び（二〇二六）は1字ずつ、十・百・千を含むものは足し合わせる。
+        if (!/[十百千]/.test(run)) return run.split('').map(ch => String(digits[ch])).join('');
+        let total = 0;
+        let current = 0;
+        for (const ch of run) {
+            if (ch in digits) {
+                current = digits[ch];
+            } else {
+                total += (current || 1) * units[ch];
+                current = 0;
+            }
+        }
+        return String(total + current);
+    });
+}
+
+function extractProtectedTokens(text: string) {
+    const normalized = kanjiNumeralsToDigits(String(text || '').normalize('NFKC')).replace(/,/g, '');
+    const tokens: string[] = [];
+    const exhibits = normalized.match(PROTECTED_EXHIBIT_PATTERN) || [];
+    for (const ex of exhibits) tokens.push(`号証:${ex.replace(/[\s第号証]/g, '')}`);
+    const withoutExhibits = normalized.replace(PROTECTED_EXHIBIT_PATTERN, ' ');
+    for (const role of withoutExhibits.match(PROTECTED_ROLE_PATTERN) || []) tokens.push(`役割:${role}`);
+    for (const num of withoutExhibits.match(/\d+/g) || []) tokens.push(`数字:${Number(num)}`);
+    return tokens.sort();
+}
+
+/** 補正で守る語が変わったら、その語の違いを返す（変わっていなければ null）。 */
+function findProtectedTokenChanges(rawText: string, correctedText: string) {
+    const before = extractProtectedTokens(rawText);
+    const after = extractProtectedTokens(correctedText);
+    if (before.join('\u0000') === after.join('\u0000')) return null;
+    const counts = new Map<string, number>();
+    for (const t of before) counts.set(t, (counts.get(t) || 0) + 1);
+    const added: string[] = [];
+    for (const t of after) {
+        const n = counts.get(t) || 0;
+        if (n > 0) counts.set(t, n - 1);
+        else added.push(t);
+    }
+    const removed: string[] = [];
+    for (const [t, n] of counts) for (let i = 0; i < n; i++) removed.push(t);
+    return { removed, added };
+}
+
+type PostprocessGuardRevert = { id: number; time: string; raw: string; corrected: string; removed: string[]; added: string[] };
+
 function anchorGeminiTranscribePostprocessItems(
     rawItems: TranscriptItem[],
     formattedItems: TranscriptItem[],
     explicitSpeakerMap: Map<string, string> = new Map(),
     idOffset = 0,
+    guardLog: PostprocessGuardRevert[] | null = null,
 ) {
     const stableSpeakerPattern = /^話者\d+(?:（区間\d+）)?$/;
     const unresolvedSpeakerPattern = /^(?:話者\d+|話者不明|不明|unknown|(?:spk|speaker)(?:\s*[:_\s-]?\s*\d+)?)$/i;
@@ -2614,9 +2673,38 @@ function anchorGeminiTranscribePostprocessItems(
             ...(raw.endTime ? { endTime: raw.endTime } : {}),
             ...(Number.isFinite(raw.startMs) ? { startMs: raw.startMs } : {}),
             ...(Number.isFinite(raw.endMs) ? { endMs: raw.endMs } : {}),
-            text: String(item?.text || '').trim() || raw.text,
+            text: guardPostprocessText(raw, String(item?.text || '').trim(), idOffset + index + 1, guardLog),
         };
     });
+}
+
+function guardPostprocessText(raw: TranscriptItem, correctedText: string, id: number, guardLog: PostprocessGuardRevert[] | null) {
+    if (!correctedText) return raw.text;
+    const rawText = String(raw.text || '').trim();
+    if (correctedText === rawText) return correctedText;
+    const changes = findProtectedTokenChanges(rawText, correctedText);
+    if (!changes) return correctedText;
+    if (guardLog) {
+        guardLog.push({ id, time: raw.time, raw: rawText, corrected: correctedText, removed: changes.removed, added: changes.added });
+    }
+    return raw.text;
+}
+
+function logPostprocessGuardReverts(logLabel: string, guardLog: PostprocessGuardRevert[]) {
+    if (guardLog.length === 0) return;
+    console.warn(`[${logLabel}] AI補正が当事者・号証・数字を変えたため、${guardLog.length} 発言は補正せず生の書き起こしを使います。`);
+    for (const item of guardLog.slice(0, 5)) {
+        const diff = [...item.removed.map(t => `-${t}`), ...item.added.map(t => `+${t}`)].join(' ');
+        console.warn(`[${logLabel}]   ${item.time} (${diff}) 補正案: ${item.corrected.slice(0, 60)}`);
+    }
+}
+
+function summarizePostprocessGuard(guardLog: PostprocessGuardRevert[]) {
+    if (!guardLog || guardLog.length === 0) return undefined;
+    return {
+        reverted: guardLog.length,
+        examples: guardLog.slice(0, 10).map(item => ({ time: item.time, removed: item.removed, added: item.added })),
+    };
 }
 
 function parseTextAiJsonContent(content: any) {
@@ -2727,6 +2815,7 @@ async function postprocessLongTranscriptWithAi(
     const globalContext = await resolveLongTranscriptContext(filePath, rawItems, options, provider, logLabel);
     const stableSpeakerMap = new Map(globalContext.speakerMap);
     const correctedItems: TranscriptItem[] = [];
+    const guardLog: PostprocessGuardRevert[] = [];
     let overview = overlayTranscriptOverview(rawOverview, globalContext.overview);
 
     console.log(`[${logLabel}] 長尺AI後処理 2/2: 分割補正を開始します`);
@@ -2772,6 +2861,7 @@ async function postprocessLongTranscriptWithAi(
                 formattedItems,
                 speakerMap,
                 batch.startIndex,
+                guardLog,
             );
             rememberStableSpeakerMappings(stableSpeakerMap, batch.items, correctedBatch);
             correctedItems.push(...correctedBatch);
@@ -2801,7 +2891,9 @@ async function postprocessLongTranscriptWithAi(
         };
     }
     logTranscriptPostprocessChanges(logLabel, rawItems, correctedItems);
-    return { items: correctedItems, overview };
+    logPostprocessGuardReverts(logLabel, guardLog);
+    const guardReverts = summarizePostprocessGuard(guardLog);
+    return { items: correctedItems, overview, ...(guardReverts ? { guardReverts } : {}) };
 }
 
 async function postprocessTranscriptWithAi(
@@ -2829,11 +2921,14 @@ async function postprocessTranscriptWithAi(
         const items = normalizeTranscriptItems(json);
         const speakerMap = extractPostprocessSpeakerMap(json);
         if (items.length > 0 || speakerMap.size > 0) {
-            const anchoredItems = anchorGeminiTranscribePostprocessItems(orderedRawItems, items, speakerMap);
+            const guardLog: PostprocessGuardRevert[] = [];
+            const anchoredItems = anchorGeminiTranscribePostprocessItems(orderedRawItems, items, speakerMap, 0, guardLog);
             logTranscriptPostprocessChanges(logLabel, orderedRawItems, anchoredItems);
+            logPostprocessGuardReverts(logLabel, guardLog);
             return {
                 items: anchoredItems,
                 overview: overlayTranscriptOverview(rawOverview, json?.overview || {}),
+                ...(guardLog.length > 0 ? { guardReverts: summarizePostprocessGuard(guardLog) } : {}),
             };
         }
         console.warn(`[${logLabel}] AI後処理の結果から発言項目を読めなかったため、生起こしを使います。`);
@@ -2893,6 +2988,7 @@ function buildTranscriptionSettingsComment(sourcePath: string, options: Transcri
             silenceTrim: summarizeSilenceTrim(preprocess),
             audioInputConversion: preprocess.geminiInputConversion || undefined,
             audioChunking: summarizeAudioChunking(preprocess),
+            postprocessGuard: preprocess.postprocessGuard || undefined,
         },
     };
     const json = JSON.stringify(metadata, null, 2).replace(/--/g, '\\u002d\\u002d');
@@ -3757,6 +3853,10 @@ async function processAudioFile(inputPath: string, options: TranscriptionOptions
         throw err;
     }
 
+    if (result?.guardReverts) {
+        // AI 補正の守りで生の書き起こしに戻した発言を、末尾の metadata に残す。
+        preprocess.postprocessGuard = result.guardReverts;
+    }
     const adjustedItems = stableSortTranscriptItems(mapTranscriptItemsToOriginalTime(result.items, preprocess));
     const draftMarkdown = buildTranscriptMarkdown(filePath, adjustedItems, result.overview, options.target);
     const shouldAutoRename = options.autoRename && !(options.skipFormattedRename && isTranscriptAutoRenameFormatted(filePath));
@@ -3900,6 +4000,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+    findProtectedTokenChanges,
+    kanjiNumeralsToDigits,
     SUPPORTED_AUDIO_EXTENSIONS,
     isSupportedAudioPath,
     parseArgs,
