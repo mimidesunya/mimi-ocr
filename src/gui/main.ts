@@ -154,6 +154,14 @@ function hasGeminiApiKey() {
     );
 }
 
+function hasClaudeApiKey() {
+    const config = loadConfig() || {};
+    return Boolean(
+        config?.providers?.claude?.apiKey ||
+        process.env.ANTHROPIC_API_KEY
+    );
+}
+
 function hasOpenaiApiKey() {
     const config = loadConfig() || {};
     return Boolean(
@@ -346,6 +354,7 @@ ipcMain.handle('get-setup-status', async () => {
         ndlocrInstalled: isNdlocrLiteInstalled(toolsRoot),
         hasGeminiApiKey: hasGeminiApiKey(),
         hasOpenaiApiKey: hasOpenaiApiKey(),
+        hasClaudeApiKey: hasClaudeApiKey(),
         modelOptions,
         audioChatModels: modelOptions.chat,
         nodePath: getBundledNodePath(getProjectRootForGui()),
@@ -414,6 +423,7 @@ ipcMain.handle('execute-script', async (event, {
     pdfPageOptions,
     stitchOptions,
     ocrModel,
+    ocrExtras,
 }) => {
     if (!SCRIPTS[scriptKey]) {
         throw new Error('無効なスクリプトキーです');
@@ -434,8 +444,9 @@ ipcMain.handle('execute-script', async (event, {
     const resolvedAudioOptions = isAudio
         ? resolveAudioExecutionOptions(audioOptions, getProviderModel)
         : null;
-    const selectedOcrMode = ocrMode || 'ndlocr_ai';
-    const useNdlocr = selectedOcrMode === 'ndlocr_ai' || selectedOcrMode === 'ndlocr_only';
+    const selectedOcrMode = ocrMode || 'ndlocr_hint';
+    const useNdlocr = selectedOcrMode !== 'ai';
+    const ndlocrHint = selectedOcrMode === 'ndlocr_hint';
     const ndlocrOnly = selectedOcrMode === 'ndlocr_only';
     const ocrUsesAi = !isMerge && !isDeblank && !isSplit && !isPdfPages && !isStitch && (!ndlocrOnly || autoRename === true);
     const ocrModelSelection = String(ocrModel || '').trim();
@@ -538,17 +549,29 @@ ipcMain.handle('execute-script', async (event, {
             scriptArgs.push(`--context-file=${contextTempFile}`);
         }
     } else if (!isMerge && !isDeblank && !isStitch) {
-        // ターゲット（houhi / general）
-        const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
+        // ターゲット（auto / houhi / general）
+        const target = ocrTarget === 'houhi' || ocrTarget === 'general' ? ocrTarget : 'auto';
         scriptArgs.push('--target', target);
 
         // OCRエンジン設定
         if (ndlocrOnly) {
             scriptArgs.push('--ndlocr_only');
+        } else if (ndlocrHint) {
+            scriptArgs.push('--ndlocr_hint');
         } else if (useNdlocr) {
             scriptArgs.push('--ndlocr');
         } else {
             scriptArgs.push('--no_ndlocr');
+        }
+
+        // 照合・検索できる PDF
+        if (ocrExtras?.crossCheck === false) {
+            scriptArgs.push('--no_crosscheck');
+        } else if (ocrExtras?.crossCheck === true && !useNdlocr) {
+            scriptArgs.push('--crosscheck');
+        }
+        if (typeof ocrExtras?.searchablePdf === 'boolean') {
+            scriptArgs.push(ocrExtras.searchablePdf ? '--searchable_pdf' : '--no_searchable_pdf');
         }
 
         // PDFテキスト優先
@@ -656,8 +679,8 @@ ipcMain.handle('execute-script', async (event, {
         const contextLabel = context ? 'あり' : 'なし';
         consoleWin.webContents.send('console-info', `音声認識: ${target} / ${provider} / モデル: ${effectiveAudioModel}${postprocessLabel} / モード: ${modeLabel} / 自動改名: ${renameLabel} / 形式済み: ${formattedLabel} / 無音カット: ${trimLabel} / コンテキスト: ${contextLabel}`);
     } else if (!isMerge && !isStitch) {
-        const target = ocrTarget === 'houhi' ? 'houhi' : 'general';
-        const ocrLabel = ndlocrOnly ? 'ndlocr-only' : (useNdlocr ? 'ndlocr+AI' : 'AIのみ');
+        const target = ocrTarget === 'houhi' || ocrTarget === 'general' ? ocrTarget : '自動';
+        const ocrLabel = ndlocrOnly ? 'ndlocrのみ（無料）' : (ndlocrHint ? 'AI＋ndlocr参考' : (useNdlocr ? 'ndlocr文字→AI' : 'AIのみ'));
         const renameLabel = autoRename === false ? 'Off' : 'On';
         const formattedLabel = skipFormattedRename === true ? 'スキップ' : '再判定';
         const selectedProvider = aiProvider || 'gemini';
@@ -752,6 +775,15 @@ ipcMain.handle('execute-script', async (event, {
             }
             if (contextTempFile) {
                 try { require('fs').unlinkSync(contextTempFile); } catch (_) {}
+            }
+
+            // 照合で食い違いがあれば、レポートを開いて確かめる所を示す。
+            const reportPaths = Array.from(new Set(
+                Array.from(`${stdout}\n${stderr}`.matchAll(/\[照合\][^\n]*?確かめてください: (.+?_照合\.html)\s*$/gm)).map(m => m[1].trim())
+            ));
+            for (const reportPath of reportPaths) {
+                safeSend('console-warning', `照合レポートを開きます: ${reportPath}`);
+                shell.openPath(reportPath).catch(() => {});
             }
 
             if (code === 0) {

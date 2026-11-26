@@ -324,6 +324,7 @@
         }
 
         .split-json-row.hidden { display: none; }
+        .free-mode-note.hidden { display: none; }
 
         .split-json-textarea {
             width: 100%;
@@ -625,6 +626,25 @@
             align-items: center;
         }
 
+        .settings-warning {
+            margin: 8px 0 4px;
+            padding: 8px 10px;
+            border-left: 3px solid #d08a00;
+            background: rgba(208, 138, 0, 0.08);
+            font-size: 0.75rem;
+            line-height: 1.6;
+            user-select: text;
+        }
+
+        .free-mode-note {
+            margin: 4px 0 8px;
+            padding: 6px 10px;
+            border-left: 3px solid #2f7d4f;
+            background: rgba(47, 125, 79, 0.08);
+            font-size: 0.75rem;
+            line-height: 1.6;
+        }
+
         .settings-note {
             grid-column: 1 / -1;
             color: var(--secondary-text-color);
@@ -825,7 +845,8 @@
                 <div class="selector-group">
                     <span class="option-label" id="labelOcrTarget">出力:</span>
                     <div class="toggle-group" id="toggleOcrTarget">
-                        <button class="toggle-btn active" data-ocr-target="general">一般</button>
+                        <button class="toggle-btn active" data-ocr-target="auto" title="文書ごとに、裁判書面なら法匪の書式、それ以外は一般の書式で書き起こします（音声認識では一般）">自動</button>
+                        <button class="toggle-btn" data-ocr-target="general">一般</button>
                         <button class="toggle-btn" data-ocr-target="houhi">法匪</button>
                     </div>
                 </div>
@@ -861,9 +882,29 @@
                 <div class="selector-group">
                     <span class="option-label" id="labelOcr">OCR:</span>
                     <div class="toggle-group" id="toggleOcr">
-                        <button class="toggle-btn" data-ocr-mode="ai">AIのみ</button>
-                        <button class="toggle-btn active" data-ocr-mode="ndlocr_ai">ndlocr+AI</button>
-                        <button class="toggle-btn" data-ocr-mode="ndlocr_only">ndlocr-only</button>
+                        <button class="toggle-btn active" data-ocr-mode="ndlocr_hint" title="頁の画像を AI に読ませ、手元の ndlocr-lite の読みを参考に添えます（おすすめ。2026-11 の比較で最も正確）">AI＋ndlocr参考</button>
+                        <button class="toggle-btn" data-ocr-mode="ai" title="頁の画像だけを AI に読ませます">AIのみ</button>
+                        <button class="toggle-btn" data-ocr-mode="ndlocr_ai" title="ndlocr-lite の文字だけを AI に整形させます（0.1 の方式。表や FAX で取りこぼしやすい）">ndlocr文字→AI</button>
+                        <button class="toggle-btn" data-ocr-mode="ndlocr_only" title="AI を使わず、手元の ndlocr-lite だけで読みます。費用はかかりません（PDF のみ）">ndlocrのみ（無料）</button>
+                    </div>
+                </div>
+            </div>
+            <div class="free-mode-note hidden" id="freeModeNote">APIキーが設定されていないので、無料の ndlocr-lite だけで読みます（PDF のみ）。表や FAX の精度を上げるには、設定の「APIキーの取り方」からキーを設定してください。</div>
+
+            <!-- 照合 / 検索できるPDF -->
+            <div class="selector-row">
+                <div class="selector-group">
+                    <span class="option-label" id="labelCrossCheck" title="AI と ndlocr-lite の読みで、日付・番号・数字が食い違った所を画像つきの _照合.html にまとめます">照合:</span>
+                    <div class="toggle-group" id="toggleCrossCheck">
+                        <button class="toggle-btn active" data-crosscheck="true">On</button>
+                        <button class="toggle-btn" data-crosscheck="false">Off</button>
+                    </div>
+                </div>
+                <div class="selector-group">
+                    <span class="option-label" id="labelSearchablePdf" title="元の PDF に読んだ文字を見えない層として重ねた _検索可能.pdf も作ります">検索できるPDF:</span>
+                    <div class="toggle-group" id="toggleSearchablePdf">
+                        <button class="toggle-btn" data-searchable-pdf="true">作る</button>
+                        <button class="toggle-btn active" data-searchable-pdf="false">作らない</button>
                     </div>
                 </div>
             </div>
@@ -1124,6 +1165,7 @@
                                 <li>APIキーのページで「作成」または「Create API key」を押します。</li>
                                 <li>出てきた長い文字列をコピーして、設定の Gemini APIキーへ貼ります。</li>
                             </ol>
+                            <p class="settings-warning">無料枠のキーで送った書類は、Google が製品の改善に使い、人が読むこともあると規約にあります。裁判書類や個人情報を含む書類は、Google Cloud で課金（請求先アカウント）を有効にしたキーで送ってください。課金を有効にしたキーなら、書類は製品の改善に使われません。</p>
                             <div class="help-link-row">
                                 <button class="context-browse-btn" type="button" data-open-url="https://aistudio.google.com/app/apikey">APIキーを作る</button>
                                 <button class="context-browse-btn" type="button" data-open-url="https://ai.google.dev/gemini-api/docs/api-key?hl=ja">公式説明</button>

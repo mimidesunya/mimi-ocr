@@ -88,13 +88,30 @@ CLI OCR の既定値です。通常は `app.defaults.json` 側に置き、ユー
 | キー | 必須 | 説明 |
 | --- | --- | --- |
 | `provider` | 任意 | `gemini`、`claude`、`openai` |
-| `target` | 任意 | `general` または `houhi` |
+| `target` | 任意 | `auto`（既定。文書ごとに裁判書面なら `houhi`、それ以外は `general`）、`general`、`houhi` |
 | `mode` | 任意 | `sync` または `batch` |
 | `batchSize` | 任意 | PDF の処理ページ数 |
-| `ndlocr` | 任意 | PDF OCR で `ndlocr-lite` を併用するか。`pre` / `only` / `off`。既定は `pre` |
+| `ndlocr` | 任意 | PDF OCR で `ndlocr-lite` をどう使うか。`hint`（既定。頁の画像を AI に読ませ、ndlocr の読みを参考に添える）/ `pre`（ndlocr の文字だけを AI に整形させる）/ `only`（ndlocr のみ、無料）/ `off`（画像だけ） |
+| `crossCheck` | 任意 | AI と ndlocr の読みを照合して `_照合.html` を作るか。未指定なら ndlocr を使うときに行う。`true` なら画像だけで読むときも ndlocr を回して行う |
+| `searchablePdf` | 任意 | 元の PDF に文字の層を重ねた `_検索可能.pdf` を作るか。未指定なら ndlocr のみのときに作る |
 | `preferPdfText` | 任意 | 埋め込みテキストがあるPDFでOCRより抽出テキストを優先するか |
 | `autoRename` | 任意 | OCR後に変更前のファイル名と内容からファイル名を自動生成するか |
 | `skipFormattedRename` | 任意 | 既に自動改名形式のファイルは再判定せずスキップするか。既定は `false` |
+
+### `pricing`
+
+費用の目安と実費の計算に使う単価（100万トークンあたりの米ドル）です。標準値は `app.defaults.json` にあり、基準日（`asOf`）を付けています。単価は変わるので、各社の料金ページで確かめ、違っていれば `config.json` の `pricing.models` で上書きしてください。単価の無いモデルはトークン数だけを出します。
+
+```json
+{
+  "pricing": {
+    "asOf": "2026-12-01",
+    "models": {
+      "gemini-3.8-flash": { "inputPerMTok": 0.75, "outputPerMTok": 3.75 }
+    }
+  }
+}
+```
 
 ### `transcription`
 

@@ -92,7 +92,7 @@ GUIの「Chat APIで全体補正」は二段階処理の切替です。Onでは�
 
 | オプション | 説明 |
 | --- | --- |
-| `--target houhi\|general` | 出力スタイルを切り替える |
+| `--target auto\|houhi\|general` | 出力スタイルを切り替える（既定の auto は文書ごとに裁判書面かを判定し、裁判書面だけ houhi） |
 | `--context-file <path>` | houhi モード用のサンプル Markdown を指定する |
 | `--context-text <text>` | 登場人物、役職、固有名詞などをOCR補助テキストとして渡す |
 | `--context-file-text <path>` | OCR補助テキストをファイルから読み込む |
@@ -103,9 +103,15 @@ GUIの「Chat APIで全体補正」は二段階処理の切替です。Onでは�
 | `--ai gemini\|claude\|openai` | AI プロバイダーを選ぶ |
 | `--model <model>` | OCRに使う具体的なChatモデルを選ぶ |
 | `--mode batch\|sync` | バッチ処理か同期処理かを選ぶ |
-| `--ndlocr` | `ndlocr-lite` を前処理として使う |
-| `--ndlocr_only` | AI を使わず `ndlocr-lite` のみで処理する |
+| `--ndlocr_hint` | 頁の画像を AI に読ませ、`ndlocr-lite` の読みを参考に添える（既定） |
+| `--ndlocr` | `ndlocr-lite` の文字だけを AI に整形させる（0.1 の既定） |
+| `--ndlocr_only` | AI を使わず `ndlocr-lite` のみで処理する（無料。API キーが無ければ既定） |
+| `--no_ndlocr` | 頁の画像だけを AI に読ませる |
+| `--crosscheck` / `--no_crosscheck` | AI と `ndlocr-lite` の読みを照合し、日付・番号・数字の食い違いを `_照合.html` にまとめる／まとめない |
+| `--searchable_pdf` / `--no_searchable_pdf` | 元の PDF に文字の層を重ねた `_検索可能.pdf` を作る／作らない |
 | `--prefer_pdf_text` | 埋め込みテキストがある PDF では OCR よりそちらを優先する |
+
+読んだ頁は、同じ字や句の異常な繰り返し（■の暴走など）、AI の断り書き（「断片的なテキストに基づき…」など）、ndlocr の読みと比べた字数の外れ（取りこぼし・作文）を調べ、見つかれば1頁ずつ読み直します。それでも残った頁は、ログの `[要確認]` と末尾メタデータの `suspectPages` に出ます。実行の前に費用の目安を、後に実費（入出力トークンと概算ドル、末尾メタデータの `usage`）をログに出します。
 
 OCR のプロンプト（画像、ndlocr-lite の後の整形、Word・PowerPoint など）には、実行した日の日付を「今日は令和8年（2026年）11月26日。令和8年11月までの日付は実在する過去の日付なので、年を直したり印を付けたりしない。」の形で自動で入れます。日付を知らないモデル（gemini-3.8-flash など）が「令和8年」を未来の年とみなし、令和6年に直したり `(-- as is)` を付けたりするのを防ぐためです。日付を `--context-text` で渡す必要はありません。`--show_prompt` で中身を確かめられます。
 

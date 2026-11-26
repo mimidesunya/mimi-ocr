@@ -43,6 +43,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const toolHelpOkBtn   = document.getElementById('toolHelpOkBtn') as HTMLButtonElement;
 
     const ocrBtns      = document.querySelectorAll<HTMLElement>('[data-ocr-mode]');
+    const toggleCrossCheck = document.getElementById('toggleCrossCheck') as HTMLElement;
+    const labelCrossCheck = document.getElementById('labelCrossCheck') as HTMLElement;
+    const crossCheckBtns = document.querySelectorAll<HTMLElement>('[data-crosscheck]');
+    const toggleSearchablePdf = document.getElementById('toggleSearchablePdf') as HTMLElement;
+    const labelSearchablePdf = document.getElementById('labelSearchablePdf') as HTMLElement;
+    const searchablePdfBtns = document.querySelectorAll<HTMLElement>('[data-searchable-pdf]');
+    const freeModeNote = document.getElementById('freeModeNote') as HTMLElement;
+    let freeModeActive = false;
     const modeBtns     = document.querySelectorAll<HTMLElement>('[data-mode]');
     const pdfTextBtns  = document.querySelectorAll<HTMLElement>('[data-pdftext]');
     const autoRenameBtns = document.querySelectorAll<HTMLElement>('[data-auto-rename]');
@@ -79,16 +87,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---- 状態 ----
     type ScriptKey = 'ocr' | 'transcribe_audio' | 'merge' | 'split' | 'deblank' | 'stitch' | 'pdf_pages';
-    type OcrTarget = 'general' | 'houhi';
+    type OcrTarget = 'auto' | 'general' | 'houhi';
     let currentScript: ScriptKey = 'ocr';
-    let currentOcrTarget: OcrTarget = 'general';
+    let currentOcrTarget: OcrTarget = 'auto';
     let currentAudioModel = audioModelState.DEFAULT_AUDIO_MODEL_SELECTION;
     let currentAudioPostprocess = true;
     let currentAudioChatModel = audioModelState.DEFAULT_AUDIO_CHAT_MODEL_SELECTION;
     let currentOcrModel = audioModelState.DEFAULT_OCR_MODEL_SELECTION;
     let currentAiProvider = 'gemini';
     let currentProcessMode = 'sync';
-    let currentOcrMode = 'ndlocr_ai'; // ai | ndlocr_ai | ndlocr_only
+    let currentOcrMode = 'ndlocr_hint'; // ndlocr_hint | ai | ndlocr_ai | ndlocr_only
+    let currentCrossCheck = true;
+    let currentSearchablePdf = false;
     let currentPreferPdfText = false;
     let currentAutoRename = false;
     let currentSkipFormattedRename = false;
@@ -939,8 +949,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (btn.classList.contains('disabled')) return;
             ocrTargetBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            currentOcrTarget = (btn.dataset.ocrTarget as OcrTarget) || 'general';
-            log(`OCR出力変更: ${currentOcrTarget === 'houhi' ? '法匪' : '一般'}`);
+            currentOcrTarget = (btn.dataset.ocrTarget as OcrTarget) || 'auto';
+            log(`OCR出力変更: ${({ auto: '自動', houhi: '法匪', general: '一般' } as any)[currentOcrTarget]}`);
             applyConstraints();
             saveGuiState();
         });
@@ -974,10 +984,32 @@ document.addEventListener('DOMContentLoaded', () => {
             if (btn.classList.contains('disabled')) return;
             ocrBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            currentOcrMode = btn.dataset.ocrMode || 'ai';
-            const labels = { ai: 'AIのみ', ndlocr_ai: 'ndlocr+AI', ndlocr_only: 'ndlocr-only' };
+            currentOcrMode = btn.dataset.ocrMode || 'ndlocr_hint';
+            const labels = { ndlocr_hint: 'AI＋ndlocr参考', ai: 'AIのみ', ndlocr_ai: 'ndlocr文字→AI', ndlocr_only: 'ndlocrのみ（無料）' };
             log(`OCRエンジン変更: ${labels[currentOcrMode] || currentOcrMode}`);
             applyConstraints();
+            saveGuiState();
+        });
+    });
+
+    // ---- 照合 / 検索できるPDF ----
+    crossCheckBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
+            crossCheckBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentCrossCheck = btn.dataset.crosscheck !== 'false';
+            log(`照合: ${currentCrossCheck ? 'On' : 'Off'}`);
+            saveGuiState();
+        });
+    });
+    searchablePdfBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('disabled')) return;
+            searchablePdfBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentSearchablePdf = btn.dataset.searchablePdf === 'true';
+            log(`検索できるPDF: ${currentSearchablePdf ? '作る' : '作らない'}`);
             saveGuiState();
         });
     });
@@ -1145,6 +1177,9 @@ document.addEventListener('DOMContentLoaded', () => {
         labelAi.classList.toggle('disabled', !aiEnabled);
         setGroupDisabled(toggleMode, labelMode, modeBtns, !modeEnabled);
         setGroupDisabled(togglePdfText, labelPdfText, pdfTextBtns, !ocr);
+        setGroupDisabled(toggleCrossCheck, labelCrossCheck, crossCheckBtns, !ocr || ndlocrOnly);
+        setGroupDisabled(toggleSearchablePdf, labelSearchablePdf, searchablePdfBtns, !ocr);
+        freeModeNote.classList.toggle('hidden', !(ocr && ndlocrOnly && freeModeActive));
         setGroupDisabled(toggleAutoRename, labelAutoRename, autoRenameBtns, !autoRenameEnabled);
         setGroupDisabled(toggleFormattedRename, labelFormattedRename, formattedRenameBtns, !autoRenameEnabled || !currentAutoRename);
         setGroupDisabled(toggleSilenceTrim, labelSilenceTrim, silenceTrimBtns, !audio);
@@ -1202,6 +1237,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentAiProvider,
                 currentProcessMode,
                 currentOcrMode,
+                currentCrossCheck,
+                currentSearchablePdf,
                 currentPreferPdfText,
                 currentAutoRename,
                 currentSkipFormattedRename,
@@ -1233,6 +1270,8 @@ document.addEventListener('DOMContentLoaded', () => {
             currentAiProvider = audioModelState.parseOcrModelSelection(currentOcrModel).provider;
             currentProcessMode = state.currentProcessMode || currentProcessMode;
             currentOcrMode = state.currentOcrMode || currentOcrMode;
+            currentCrossCheck = state.currentCrossCheck !== false;
+            currentSearchablePdf = state.currentSearchablePdf === true;
             currentPreferPdfText = state.currentPreferPdfText === true;
             currentAutoRename = state.currentAutoRename === true;
             currentSkipFormattedRename = state.currentSkipFormattedRename === true;
@@ -1253,6 +1292,8 @@ document.addEventListener('DOMContentLoaded', () => {
             setActiveByData(ocrTargetBtns, 'ocrTarget', currentOcrTarget);
             setActiveByData(modeBtns, 'mode', currentProcessMode);
             setActiveByData(ocrBtns, 'ocrMode', currentOcrMode);
+            setActiveByData(crossCheckBtns, 'crosscheck', String(currentCrossCheck));
+            setActiveByData(searchablePdfBtns, 'searchablePdf', String(currentSearchablePdf));
             setActiveByData(pdfTextBtns, 'pdftext', String(currentPreferPdfText));
             setActiveByData(autoRenameBtns, 'autoRename', String(currentAutoRename));
             setActiveByData(formattedRenameBtns, 'skipFormattedRename', String(currentSkipFormattedRename));
@@ -1275,9 +1316,32 @@ document.addEventListener('DOMContentLoaded', () => {
     stitchDpiInput.addEventListener('input', saveGuiState);
 
     // 初期状態
+    const hadSavedGuiState = (() => {
+        try { return Boolean(localStorage.getItem(GUI_STATE_KEY)); } catch (_e) { return false; }
+    })();
     restoreGuiState();
     applyConstraints();
     void refreshRuntimeModelOptions();
+    void applyFreeModeIfNoKeys(!hadSavedGuiState);
+
+    // APIキーが1つもなければ、無料の道（ndlocr のみ、検索できる PDF も作る）を案内する。
+    // 初めて開いたときは自動で選び、保存済みの設定があるときは案内だけ出す。
+    async function applyFreeModeIfNoKeys(firstRun: boolean) {
+        try {
+            const status = await (window as any).electronAPI.getSetupStatus();
+            const anyKey = Boolean(status?.hasGeminiApiKey || status?.hasOpenaiApiKey || status?.hasClaudeApiKey);
+            freeModeActive = !anyKey;
+            if (!anyKey && firstRun) {
+                currentOcrMode = 'ndlocr_only';
+                currentSearchablePdf = true;
+                setActiveByData(ocrBtns, 'ocrMode', currentOcrMode);
+                setActiveByData(searchablePdfBtns, 'searchablePdf', 'true');
+                log('APIキーが設定されていないので、無料の ndlocr-lite だけで読む設定にしました。');
+            }
+            applyConstraints();
+        } catch (_e) {
+        }
+    }
 
     // ---- ドラッグ＆ドロップ ----
     dropZone.addEventListener('dragover', (e) => {
@@ -1468,7 +1532,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function currentTaskNeedsNdlocr() {
-        return currentScript === 'ocr' && (currentOcrMode === 'ndlocr_ai' || currentOcrMode === 'ndlocr_only');
+        return currentScript === 'ocr' && (currentOcrMode !== 'ai' || currentCrossCheck || currentSearchablePdf);
     }
 
     async function ensureSetupBeforeExecute() {
@@ -1482,6 +1546,27 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err: any) {
             log(`セットアップ状態を確認できませんでした: ${err.message}`, 'error');
             return false;
+        }
+
+        // OCR で AI のキーが無いときは、止める前に無料の道（ndlocr のみ）を勧める。
+        const ocrMissingKey = currentScript === 'ocr' && currentOcrMode !== 'ndlocr_only' && (
+            (currentAiProvider === 'gemini' && !status?.hasGeminiApiKey) ||
+            (currentAiProvider === 'openai' && !status?.hasOpenaiApiKey) ||
+            (currentAiProvider === 'claude' && !status?.hasClaudeApiKey)
+        );
+        if (ocrMissingKey && !currentAutoRename) {
+            const ok = window.confirm('AI の APIキーが設定されていません。\n\n無料の ndlocr-lite だけで読みますか？（PDF のみ。表や FAX の精度は下がります）\n\n「キャンセル」を押すと、APIキーの設定画面を開きます。');
+            if (ok) {
+                currentOcrMode = 'ndlocr_only';
+                setActiveByData(ocrBtns, 'ocrMode', currentOcrMode);
+                freeModeActive = true;
+                applyConstraints();
+                saveGuiState();
+                log('無料の ndlocr-lite だけで読みます。');
+            } else {
+                await openConfigModal('keys');
+                return false;
+            }
         }
 
         if (currentTaskNeedsOpenAi() && !status?.hasOpenaiApiKey) {
@@ -1615,6 +1700,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     dpi: intOrAuto(stitchDpiInput.value, 300, 72, 600)
                 } : null,
                 currentOcrModel,
+                { crossCheck: currentCrossCheck, searchablePdf: currentSearchablePdf },
             );
             if (result.success) {
                 log('処理が正常に完了しました。', 'success');

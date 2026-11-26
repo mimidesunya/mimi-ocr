@@ -10,7 +10,12 @@ PDF だけでなく、Word (`.docx` / `.doc`)、ODT、PowerPoint (`.pptx`) も�
 - 音声ファイルの発言者分離つき Markdown / 反訳書化
 - ReazonSpeech K2 / sherpa-onnx によるローカル音声認識と AI 後処理
 - Gemini / Claude / OpenAI の切り替え
-- PDF での `ndlocr-lite` 併用
+- PDF での `ndlocr-lite` 併用（既定は、頁の画像を AI に読ませ、ndlocr-lite の読みを参考に添える方式）
+- API キーなしで使える無料の道（ndlocr-lite だけで読み、検索できる PDF も作る）
+- AI と ndlocr-lite の読みの照合（日付・事件番号・号証番号・数字の食い違いを、頁画像の切り抜きつきの `_照合.html` にまとめる）
+- 暴走（■ の繰り返しなど）・AI の断り書き・字数の外れを見つけて読み直す検知
+- 出力の型の自動判定（裁判書面だけ法匪の書式）
+- 実行前の費用の目安と、実行後の実費（トークンと概算ドル）の表示
 - OCR 後のページ結合 (`*_paged.md` -> `*_merged.md`)
 - OCR 結果を使った PDF ページ抽出・結合・2面割付
 - GUI / CLI での分割スキャンPDFページ復元
@@ -82,8 +87,15 @@ npm run ocr -- <入力パス...> [オプション]
 npm run ocr -- .\sample.pdf
 npm run ocr -- .\sample.pdf --ai openai --mode batch
 npm run ocr -- .\sample.pdf --target houhi
-npm run ocr -- .\sample.pdf --ndlocr
+npm run ocr -- .\sample.pdf --ndlocr_hint
+npm run ocr -- .\sample.pdf --ndlocr_only --searchable_pdf
 ```
+
+API キーが無ければ、モードを指定しないかぎり ndlocr-lite だけで読みます（無料、PDF のみ）。キーがあれば既定は `--ndlocr_hint`（頁の画像を AI に読ませ、ndlocr-lite の読みを参考に添える）です。2026-11 の比較（`benchmark/results/2026-11-26-ndlocr方式とモデル.md`）で、0.1 の既定（ndlocr の文字だけを AI に整形させる）より欠落も数字の誤りも少なく、FAX の表で特に差が出ました。
+
+### API キーと無料枠
+
+Gemini の無料枠のキーで送った書類は、Google が製品の改善に使い、人が読むこともあると規約にあります。裁判書類や個人情報を含む書類は、Google Cloud で課金を有効にしたキーで送ってください（課金を有効にしたキーなら製品の改善に使われません）。費用は gemini-3.1-flash-lite で1頁あたり約 0.001 米ドルです（実行のたびにログと末尾メタデータの `usage` に出ます）。
 
 ### ページ結合
 
@@ -175,7 +187,7 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 
 | オプション | 説明 |
 | --- | --- |
-| `--target houhi\|general` | 出力スタイルを切り替える |
+| `--target auto\|houhi\|general` | 出力スタイルを切り替える（既定の auto は裁判書面だけ houhi） |
 | `--context-file <path>` | houhi 用のサンプル Markdown を指定する |
 | `--context-text <text>` | OCR用の補助コンテキストを指定する |
 | `--ai gemini\|claude\|openai` | AI プロバイダーを選ぶ |
@@ -184,8 +196,12 @@ npm run pdf-pages -- --pages 1-8 --two-up --direction rtl .\sample.pdf
 | `--batch_size <n>` | PDF の処理ページ数を指定する |
 | `--start_page <n>` | 開始ページを指定する |
 | `--end_page <n>` | 終了ページを指定する |
-| `--ndlocr` | `ndlocr-lite` を前処理として使う |
-| `--ndlocr_only` | `ndlocr-lite` のみで処理する |
+| `--ndlocr_hint` | 頁の画像を AI に読ませ、`ndlocr-lite` の読みを参考に添える（既定） |
+| `--ndlocr` | `ndlocr-lite` の文字だけを AI に整形させる（0.1 の既定） |
+| `--ndlocr_only` | `ndlocr-lite` のみで処理する（無料、PDF のみ） |
+| `--no_ndlocr` | 頁の画像だけを AI に読ませる |
+| `--crosscheck` / `--no_crosscheck` | AI と `ndlocr-lite` の読みの照合をする／しない（ndlocr を使うときは既定でする） |
+| `--searchable_pdf` / `--no_searchable_pdf` | 元の PDF に文字の層を重ねた `_検索可能.pdf` を作る／作らない（ndlocr のみのときは既定で作る） |
 | `--prefer_pdf_text` | 埋め込みテキストを優先する |
 | `--auto_rename` | AI による自動ファイル名変更を有効にする |
 
@@ -200,6 +216,8 @@ ReazonSpeech K2 を使う場合は `--reazon-language=ja|ja-en|ja-en-mls-5k`、`
 | ファイル | 説明 |
 | --- | --- |
 | `*_paged.md` | OCR 直後のページ境界付き Markdown |
+| `*_照合.html` | AI と ndlocr-lite の読みが食い違った所（頁画像の切り抜きつき）。食い違いがあるときだけ作る |
+| `*_検索可能.pdf` | 元の PDF に ndlocr-lite の読みを見えない文字の層として重ねた PDF |
 | `*_ERROR_paged.md` | 一部失敗を含む途中結果 |
 | `*_merged.md` | ページ結合後の Markdown |
 | `*_noblank.pdf` / `*_noblank_paged.md` | ブランクページ除去後の PDF / MD |
