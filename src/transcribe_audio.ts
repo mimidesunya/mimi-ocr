@@ -3169,6 +3169,10 @@ function buildGeneralTranscriptMarkdown(filePath: string, items: TranscriptItem[
     ].filter(line => line !== '').join('\n');
 }
 
+function isOpenAiDiarizeModel(model: any) {
+    return /diarize/i.test(String(model || ''));
+}
+
 async function transcribeWithOpenAI(filePath: string, options: TranscriptionOptions) {
     if (!options.openaiApiKey) {
         throw new Error('OpenAI APIキーがありません。config.json の providers.openai.apiKey または OPENAI_API_KEY を設定してください。');
@@ -3185,11 +3189,19 @@ async function transcribeWithOpenAI(filePath: string, options: TranscriptionOpti
     form.append('file', new Blob([buffer as any], { type: getMimeType(filePath) }), path.basename(filePath));
     form.append('model', model);
     form.append('language', options.language);
-    form.append('prompt', buildTranscriptPrompt(path.basename(filePath), options.language, options.target, options.contextText));
-    if (model.includes('diarize')) {
+    // 話者分離のモデル（gpt-4o-transcribe-diarize など）は prompt を受け付けず、送ると 400 で止まる。
+    // 事前コンテキストは、書き起こしの後の Chat API の補正（全体解析・分割補正）で使う。
+    const diarize = isOpenAiDiarizeModel(model);
+    if (diarize) {
+        if (String(options.contextText || '').trim()) {
+            console.log(options.postprocessAi === 'off'
+                ? '[情報] 話者分離のモデルは文脈を受け付けないので、事前コンテキストは書き起こしに使いません（Chat API の補正が Off のため、どこにも使われません）。'
+                : '[情報] 話者分離のモデルは文脈を受け付けないので、事前コンテキストは書き起こしの後の補正だけに使います。');
+        }
         form.append('response_format', 'diarized_json');
         form.append('chunking_strategy', 'auto');
     } else {
+        form.append('prompt', buildTranscriptPrompt(path.basename(filePath), options.language, options.target, options.contextText));
         form.append('response_format', 'json');
     }
 
@@ -4046,6 +4058,7 @@ module.exports = {
     buildGeminiTranscribeRequest,
     parseGeminiTranscribeResponse,
     transcribeWithGemini,
+    transcribeWithOpenAI,
     transcribePreparedAudio,
     postprocessTranscriptWithAi,
     anchorGeminiTranscribePostprocessItems,

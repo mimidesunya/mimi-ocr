@@ -34,6 +34,7 @@ const {
     requiresGeminiTranscribeConversion,
     namespaceGeminiChunkSpeakers,
     transcribeWithGemini,
+    transcribeWithOpenAI,
     transcribePreparedAudio,
     postprocessTranscriptWithAi,
     anchorGeminiTranscribePostprocessItems,
@@ -1052,6 +1053,46 @@ test('cloud transcription runs a full Chat API correction pass only when enabled
             overview: { place: '会議室' },
             items: [{ speaker: '話者1', time: '00:01', text: '田中です福し施設の夜きんを担当しています' }],
         });
+    } finally {
+        global.fetch = originalFetch;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('the OpenAI diarization model is sent no prompt, so the context does not make it fail', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mimi-openai-diarize-prompt-'));
+    const audioPath = path.join(tempDir, 'meeting.m4a');
+    fs.writeFileSync(audioPath, 'synthetic-audio-bytes');
+    const originalFetch = global.fetch;
+    const forms = [];
+    global.fetch = async (_url, init) => {
+        forms.push(init.body);
+        return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ segments: [{ speaker: 'A', start: 0.5, end: 1.2, text: '開会します。' }] }),
+        };
+    };
+    const options = (model) => ({
+        provider: 'openai',
+        model,
+        openaiApiKey: 'synthetic-test-key',
+        language: 'ja',
+        target: 'general',
+        contextText: '出席者: 宮部、田中',
+        postprocessAi: 'auto',
+        silenceTrim: {},
+    });
+    try {
+        await transcribeWithOpenAI(audioPath, options('gpt-4o-transcribe-diarize'));
+        assert.equal(forms[0].get('model'), 'gpt-4o-transcribe-diarize');
+        assert.equal(forms[0].has('prompt'), false);
+        assert.equal(forms[0].get('response_format'), 'diarized_json');
+        assert.equal(forms[0].get('chunking_strategy'), 'auto');
+
+        await transcribeWithOpenAI(audioPath, options('gpt-4o-transcribe'));
+        assert.match(String(forms[1].get('prompt')), /出席者: 宮部、田中/);
+        assert.equal(forms[1].get('response_format'), 'json');
     } finally {
         global.fetch = originalFetch;
         fs.rmSync(tempDir, { recursive: true, force: true });

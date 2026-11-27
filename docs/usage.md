@@ -130,7 +130,7 @@ OCR のプロンプト（画像、ndlocr-lite の後の整形、Word・PowerPoin
 | `--no_auto_rename` | 元音声ファイル名ベースで出力する |
 | `--skip_formatted_rename` | 既に自動改名形式の音声ファイルは再判定せずスキップする |
 | `--no_skip_formatted_rename` | 既に自動改名形式でも再判定する |
-| `--context-text <text>` | 登場人物、役職、固有名詞などを補助テキストとして渡す |
+| `--context-text <text>` | 登場人物、役職、固有名詞などを補助テキストとして渡す。話者分離のモデル（`gemini-3.5-transcribe`、`gpt-4o-transcribe-diarize`）は文脈を受け付けないので、書き起こしの後の Chat API の補正だけに使う |
 | `--context-file <path>` | 補助テキストをファイルから読み込む |
 | `--trim_silence` | 無音区間をカットしてからAIへ渡す |
 | `--no_trim_silence` | 無音カットを無効にする |
